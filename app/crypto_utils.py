@@ -10,7 +10,7 @@ import os
 import uuid
 
 def generate_keypair():
-    """Generate Ed25519 key pair for digital signatures"""
+    """Genera una coppia di chiavi Ed25519 per firme digitali"""
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     
@@ -28,7 +28,7 @@ def generate_keypair():
     return private_pem.decode('utf-8'), public_pem.decode('utf-8')
 
 def sign_data(private_key_pem, data):
-    """Sign data with a private key"""
+    """Firma i dati con una chiave privata"""
     if isinstance(data, dict):
         data = json.dumps(data).encode('utf-8')
     elif isinstance(data, str):
@@ -43,7 +43,7 @@ def sign_data(private_key_pem, data):
     return base64.b64encode(signature).decode('utf-8')
 
 def verify_signature(public_key_pem, data, signature):
-    """Verify a signature against data with a public key"""
+    """Verifica una firma rispetto ai dati con una chiave pubblica"""
     if isinstance(data, dict):
         data = json.dumps(data).encode('utf-8')
     elif isinstance(data, str):
@@ -59,7 +59,7 @@ def verify_signature(public_key_pem, data, signature):
         return False
 
 def hash_data(data):
-    """Create SHA-256 hash of data"""
+    """Crea un hash SHA-256 dei dati"""
     if isinstance(data, dict):
         data = json.dumps(data).encode('utf-8')
     elif isinstance(data, str):
@@ -68,11 +68,11 @@ def hash_data(data):
     return hashlib.sha256(data).hexdigest()
 
 def generate_credential_id():
-    """Generate a unique credential ID"""
+    """Genera un ID credenziale unico"""
     return str(uuid.uuid4())
 
 def compute_credential_hash(credential):
-    """Compute hash of credential for blockchain storage"""
+    """Calcola l'hash della credenziale per la memorizzazione nella blockchain"""
     cred_dict = {
         "uuid": credential.uuid,
         "issuer": credential.issuer_id,
@@ -85,9 +85,8 @@ def compute_credential_hash(credential):
     return hash_data(cred_dict)
 
 def create_proof_of_integrity(credential):
-    """Create a proof of integrity for the credential"""
-    # In a real app, this would use ZKP or BBS+ signatures
-    # Here we just create a simplified hash
+    """Crea una prova di integrità per la credenziale"""
+    # Creiamo semplicemente un hash semplificato
     cred_hash = compute_credential_hash(credential)
     return {
         "type": "IntegrityProof",
@@ -97,15 +96,15 @@ def create_proof_of_integrity(credential):
     }
 
 def generate_challenge():
-    """Generate a random challenge for authentication"""
+    """Genera una sfida casuale per l'autenticazione"""
     return base64.b64encode(os.urandom(32)).decode('utf-8')
 
 def verify_challenge_response(challenge, response, public_key_pem):
-    """Verify a challenge-response for authentication"""
+    """Verifica una risposta alla sfida per l'autenticazione"""
     return verify_signature(public_key_pem, challenge, response)
 
 def selective_disclosure(credential, fields_to_disclose):
-    """Create a selective disclosure of a credential with only specified fields"""
+    """Crea una divulgazione selettiva di una credenziale con solo i campi specificati"""
     full_dict = credential.to_dict()
     disclosed_dict = {
         "metadati": {
@@ -124,7 +123,7 @@ def selective_disclosure(credential, fields_to_disclose):
         "attributiAccademici": {}
     }
     
-    # Add only the requested academic attributes
+    # Aggiungi solo gli attributi accademici richiesti
     for field in fields_to_disclose:
         if field in full_dict["attributiAccademici"]:
             disclosed_dict["attributiAccademici"][field] = full_dict["attributiAccademici"][field]
@@ -132,7 +131,7 @@ def selective_disclosure(credential, fields_to_disclose):
     return disclosed_dict
 
 def generate_ocsp_response(credential_uuid, status, private_key_pem):
-    """Generate a simplified OCSP response"""
+    """Genera una risposta OCSP semplificata"""
     response_data = {
         "credential_uuid": credential_uuid,
         "status": status,

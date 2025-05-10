@@ -1,10 +1,8 @@
-/* Custom styles for Erasmus Credentials System */
-
 .navbar-brand {
     font-weight: bold;
 }
 
-/* Card styles */
+/* Stili delle schede */
 .card {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     margin-bottom: 20px;
@@ -15,7 +13,7 @@
     border-bottom: 1px solid rgba(0, 0, 0, 0.125);
 }
 
-/* Table enhancements */
+/* Stili delle schede */
 .table {
     font-size: 0.9rem;
 }
@@ -25,13 +23,13 @@
     font-weight: 600;
 }
 
-/* Badge styles */
+/* Stili dei badges */
 .badge {
     font-weight: 500;
     padding: 0.3em 0.6em;
 }
 
-/* Pre tags for JSON display */
+/* Tag per visualizzazione JSON */
 pre.bg-light {
     font-size: 0.9rem;
     border-radius: 0.25rem;
@@ -39,7 +37,7 @@ pre.bg-light {
     border: 1px solid #dee2e6;
 }
 
-/* Custom button styles */
+/* Button */
 .btn-primary {
     background-color: #0d6efd;
     border-color: #0d6efd;
@@ -60,7 +58,7 @@ pre.bg-light {
     border-color: #b02a37;
 }
 
-/* Responsive adjustments */
+/* Adattamenti responsive */
 @media (max-width: 768px) {
     .table {
         font-size: 0.8rem;
@@ -75,7 +73,7 @@ pre.bg-light {
     }
 }
 
-/* Custom alert style */
+/* Alert */
 .alert-success, .alert-danger, .alert-info {
     border-left-width: 4px;
 }
@@ -92,7 +90,7 @@ pre.bg-light {
     border-left-color: #0dcaf0;
 }
 
-/* Code display */
+/* Visualizzazione del codice */
 code {
     font-size: 0.85rem;
     padding: 0.2em 0.4em;

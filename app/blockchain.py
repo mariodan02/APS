@@ -6,17 +6,17 @@ from models import db, BlockchainBlock
 
 class SimpleBlockchain:
     def __init__(self):
-        # Check if blockchain exists, if not initialize it
+        # Verifica se la blockchain esiste, se non esiste la inizializza
         if BlockchainBlock.query.count() == 0:
             self.add_genesis_block()
     
     def add_genesis_block(self):
-        """Create the genesis block for the blockchain"""
+        """Crea il blocco genesi per la blockchain"""
         genesis_block = BlockchainBlock(
             hash="0000genesis0000",
             previous_hash="0",
             timestamp=datetime.utcnow(),
-            data=json.dumps({"message": "Genesis Block for Academic Credentials System"}),
+            data=json.dumps({"message": "Blocco Genesi per il Sistema di Credenziali Accademiche"}),
             nonce=0
         )
         db.session.add(genesis_block)
@@ -24,21 +24,21 @@ class SimpleBlockchain:
         return genesis_block
     
     def calculate_hash(self, index, previous_hash, timestamp, data, nonce):
-        """Calculate hash for a block"""
+        """Calcola l'hash per un blocco"""
         value = str(index) + str(previous_hash) + str(timestamp) + str(data) + str(nonce)
         return hashlib.sha256(value.encode('utf-8')).hexdigest()
     
     def get_last_block(self):
-        """Get the last block in the blockchain"""
+        """Ottiene l'ultimo blocco nella blockchain"""
         return BlockchainBlock.query.order_by(BlockchainBlock.id.desc()).first()
     
     def proof_of_work(self, index, previous_hash, timestamp, data):
-        """Simplified proof of work for block creation (only for simulation)"""
+        """Proof of work semplificato per la creazione del blocco (solo per simulazione)"""
         nonce = 0
         computed_hash = self.calculate_hash(index, previous_hash, timestamp, data, nonce)
         
-        # In a real blockchain, we'd look for a hash with specific characteristics
-        # For this simulation, we just do a minimal work
+        # In una blockchain reale, cercheremmo un hash con caratteristiche specifiche
+        # Per questa simulazione, facciamo solo un lavoro minimo
         while not computed_hash.startswith('0'):
             nonce += 1
             computed_hash = self.calculate_hash(index, previous_hash, timestamp, data, nonce)
@@ -46,15 +46,15 @@ class SimpleBlockchain:
         return nonce, computed_hash
     
     def add_block(self, data):
-        """Add a new block to the blockchain"""
+        """Aggiunge un nuovo blocco alla blockchain"""
         last_block = self.get_last_block()
         
-        # Prepare new block data
+        # Prepara i dati del nuovo blocco
         index = last_block.id + 1
         timestamp = datetime.utcnow()
         nonce, computed_hash = self.proof_of_work(index, last_block.hash, timestamp, data)
         
-        # Create and save the new block
+        # Crea e salva il nuovo blocco
         new_block = BlockchainBlock(
             hash=computed_hash,
             previous_hash=last_block.hash,
@@ -68,18 +68,18 @@ class SimpleBlockchain:
         return new_block
     
     def is_valid(self):
-        """Validate the integrity of the blockchain"""
+        """Convalida l'integrità della blockchain"""
         blocks = BlockchainBlock.query.order_by(BlockchainBlock.id).all()
         
         for i in range(1, len(blocks)):
             current = blocks[i]
             previous = blocks[i-1]
             
-            # Check if hash of current block is valid
+            # Verifica se l'hash del blocco corrente è valido
             if current.previous_hash != previous.hash:
                 return False
             
-            # Check if hash is correctly calculated
+            # Verifica se l'hash è calcolato correttamente
             calculated_hash = self.calculate_hash(
                 current.id, 
                 current.previous_hash, 
@@ -94,7 +94,7 @@ class SimpleBlockchain:
         return True
     
     def add_credential(self, credential):
-        """Add a credential to the blockchain"""
+        """Aggiunge una credenziale alla blockchain"""
         data = {
             "type": "credential_issuance",
             "credential_uuid": credential.uuid,
@@ -108,7 +108,7 @@ class SimpleBlockchain:
         return block.hash
     
     def revoke_credential(self, credential_uuid, reason, revoker_id):
-        """Add a revocation record to the blockchain"""
+        """Aggiunge un record di revoca alla blockchain"""
         data = {
             "type": "credential_revocation",
             "credential_uuid": credential_uuid,
@@ -121,7 +121,7 @@ class SimpleBlockchain:
         return block.hash
     
     def verify_credential(self, credential_uuid):
-        """Check if a credential is valid or revoked"""
+        """Verifica se una credenziale è valida o revocata"""
         blocks = BlockchainBlock.query.order_by(BlockchainBlock.id).all()
         
         issuance_block = None
@@ -140,9 +140,9 @@ class SimpleBlockchain:
                 continue
         
         if not issuance_block:
-            return "unknown"  # Credential not found
+            return "unknown"  # Credenziale non trovata
         
         if revocation_block:
-            return "revoked"  # Credential was revoked
+            return "revoked"  # Credenziale revocata
             
-        return "good"  # Credential is valid
+        return "good"  # Credenziale valida

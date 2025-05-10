@@ -9,19 +9,19 @@ db = SQLAlchemy()
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)  # In a real app, store hashed passwords
+    password = db.Column(db.String(120), nullable=False)  # In un'app reale, memorizzare password hashate
     role = db.Column(db.String(20), nullable=False)  # 'issuer', 'student', 'verifier', 'ca'
-    public_key = db.Column(db.Text)  # Public key (PEM format)
-    private_key = db.Column(db.Text)  # Private key (PEM format) - In real app, don't store this
+    public_key = db.Column(db.Text)  # Chiave pubblica (formato PEM)
+    private_key = db.Column(db.Text)  # Chiave privata (formato PEM) - In un'app reale, non memorizzare questa
     
-    # Additional fields for students
-    student_pseudonym = db.Column(db.String(80))  # Used for privacy
-    student_hash_id = db.Column(db.String(120))  # Hash of real student ID
+    # Campi aggiuntivi per gli studenti
+    student_pseudonym = db.Column(db.String(80))  # Usato per la privacy
+    student_hash_id = db.Column(db.String(120))  # Hash dell'ID reale dello studente
 
-    # Additional fields for universities
-    university_did = db.Column(db.String(120))  # DID for universities
-    university_name = db.Column(db.String(120))  # Full name
-    university_country = db.Column(db.String(80))  # Country
+    # Campi aggiuntivi per le università
+    university_did = db.Column(db.String(120))  # DID per le università
+    university_name = db.Column(db.String(120))  # Nome completo
+    university_country = db.Column(db.String(80))  # Paese
 
     credentials_issued = db.relationship('Credential', backref='issuer', foreign_keys='Credential.issuer_id')
     credentials_owned = db.relationship('Credential', backref='student', foreign_keys='Credential.student_id')
@@ -35,13 +35,13 @@ class Credential(db.Model):
     issuer_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     student_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     
-    # Metadata
+    # Metadati
     version = db.Column(db.String(10), default="1.2")
     issue_timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     expiration_date = db.Column(db.DateTime)
     status = db.Column(db.String(20), default="active")  # active, revoked, suspended
     
-    # Academic attributes
+    # Attributi accademici
     course_code = db.Column(db.String(20))
     course_isced_code = db.Column(db.String(10))
     exam_grade = db.Column(db.String(10))
@@ -49,13 +49,13 @@ class Credential(db.Model):
     exam_date = db.Column(db.DateTime)
     ects_credits = db.Column(db.Integer)
     
-    # Cryptographic data
-    signature = db.Column(db.Text)  # Digital signature
-    revocation_id = db.Column(db.String(36))  # ID for revocation
-    blockchain_reference = db.Column(db.String(150))  # Reference to blockchain entry
+    # Dati crittografici
+    signature = db.Column(db.Text)  # Firma digitale
+    revocation_id = db.Column(db.String(36))  # ID per la revoca
+    blockchain_reference = db.Column(db.String(150))  # Riferimento all'inserimento nella blockchain
     
     def to_dict(self):
-        """Convert credential to dictionary format for JSON serialization"""
+        """Converte la credenziale in formato dizionario per la serializzazione JSON"""
         return {
             "metadati": {
                 "versione": self.version,
@@ -113,7 +113,7 @@ class RevocationRecord(db.Model):
     revocation_timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     reason = db.Column(db.String(200))
     revoker_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    transaction_hash = db.Column(db.String(64))  # Hash of the blockchain transaction
+    transaction_hash = db.Column(db.String(64))  # Hash della transazione blockchain
     
     revoker = db.relationship('User')
     
@@ -137,7 +137,7 @@ class BlockchainBlock(db.Model):
     hash = db.Column(db.String(64), unique=True, nullable=False)
     previous_hash = db.Column(db.String(64), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    data = db.Column(db.Text)  # JSON data with credential information
+    data = db.Column(db.Text)  # Dati JSON con informazioni sulla credenziale
     nonce = db.Column(db.Integer)
     
     def __repr__(self):

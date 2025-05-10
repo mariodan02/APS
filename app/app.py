@@ -17,13 +17,13 @@ app.config['SECRET_KEY'] = 'development-key-change-this-in-production'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///erasmus_credentials.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Initialize extensions
+# Inizializzazione delle estensioni
 db.init_app(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Register blueprints
+# Registrazione dei blueprint
 app.register_blueprint(ocsp)
 
 @login_manager.user_loader
@@ -31,9 +31,9 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 def create_sample_data():
-    """Create sample data for the application"""
+    """Crea dati di esempio per l'applicazione"""
     
-    # Create CA user
+    # Crea utente CA
     ca_private, ca_public = generate_keypair()
     ca = User(
         username="ca_admin",
@@ -42,12 +42,12 @@ def create_sample_data():
         public_key=ca_public,
         private_key=ca_private,
         university_did="did:web:ca.edu",
-        university_name="Certificate Authority",
-        university_country="EU"
+        university_name="Autorità di Certificazione",
+        university_country="UE"
     )
     db.session.add(ca)
     
-    # Create issuer university (Rennes)
+    # Crea università emittente (Rennes)
     rennes_private, rennes_public = generate_keypair()
     rennes = User(
         username="rennes_admin",
@@ -57,11 +57,11 @@ def create_sample_data():
         private_key=rennes_private,
         university_did="did:web:rennes.fr",
         university_name="Université de Rennes",
-        university_country="France"
+        university_country="Francia"
     )
     db.session.add(rennes)
     
-    # Create verifier university (Salerno)
+    # Crea università verificatrice (Salerno)
     salerno_private, salerno_public = generate_keypair()
     salerno = User(
         username="salerno_admin",
@@ -71,11 +71,11 @@ def create_sample_data():
         private_key=salerno_private,
         university_did="did:web:unisa.it",
         university_name="Università di Salerno",
-        university_country="Italy"
+        university_country="Italia"
     )
     db.session.add(salerno)
     
-    # Create 3 sample students
+    # Crea 3 studenti di esempio
     for i in range(1, 4):
         student_private, student_public = generate_keypair()
         student_real_id = f"S{i}12345"
@@ -94,17 +94,17 @@ def create_sample_data():
     
     db.session.commit()
     
-    # Initialize blockchain
+    # Inizializza blockchain
     blockchain = SimpleBlockchain()
 
-# Initialize database and create sample data
+# Inizializza database e crea dati di esempio
 with app.app_context():
     db.create_all()
-    # Check if we already have sample data
+    # Controlla se abbiamo già dei dati di esempio
     if User.query.count() == 0:
         create_sample_data()
 
-# Routes
+# Route
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -120,7 +120,7 @@ def login():
         if user and check_password_hash(user.password, password):
             login_user(user)
             
-            # Redirect based on role
+            # Reindirizza in base al ruolo
             if user.role == 'issuer':
                 return redirect(url_for('issuer_dashboard'))
             elif user.role == 'student':
@@ -130,7 +130,7 @@ def login():
             elif user.role == 'ca':
                 return redirect(url_for('ca_dashboard'))
         else:
-            flash('Invalid username or password.')
+            flash('Nome utente o password non validi.')
     
     return render_template('login.html')
 
@@ -140,12 +140,12 @@ def logout():
     logout_user()
     return redirect(url_for('index'))
 
-# Issuer University Routes
+# Route Università Emittente
 @app.route('/issuer')
 @login_required
 def issuer_dashboard():
     if current_user.role != 'issuer':
-        flash('Unauthorized access.')
+        flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
     
     students = User.query.filter_by(role='student').all()
@@ -159,7 +159,7 @@ def issuer_dashboard():
 @login_required
 def issue_credential():
     if current_user.role != 'issuer':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     data = request.json
     student_id = data.get('student_id')
@@ -169,31 +169,31 @@ def issue_credential():
     exam_date_str = data.get('exam_date')
     ects_credits = data.get('ects_credits')
     
-    # Validation
+    # Validazione
     if not all([student_id, course_code, exam_grade, exam_date_str, ects_credits]):
-        return jsonify({"error": "Missing required fields"}), 400
+        return jsonify({"error": "Campi obbligatori mancanti"}), 400
     
-    # Parse exam date
+    # Analizza data dell'esame
     try:
         exam_date = datetime.strptime(exam_date_str, '%Y-%m-%d')
     except ValueError:
-        return jsonify({"error": "Invalid date format"}), 400
+        return jsonify({"error": "Formato data non valido"}), 400
     
-    # Create credential
+    # Crea credenziale
     credential = Credential(
         issuer_id=current_user.id,
         student_id=student_id,
         course_code=course_code,
-        course_isced_code=course_isced or "0613",  # Default ISCED code for Computer Science
+        course_isced_code=course_isced or "0613",  # Codice ISCED predefinito per Informatica
         exam_grade=exam_grade,
-        exam_passed=True if int(exam_grade.split('/')[0]) >= 18 else False,  # Pass if grade >= 18/30
+        exam_passed=True if int(exam_grade.split('/')[0]) >= 18 else False,  # Passa se voto >= 18/30
         exam_date=exam_date,
         ects_credits=int(ects_credits),
-        expiration_date=datetime.utcnow() + timedelta(days=365*5),  # Valid for 5 years
+        expiration_date=datetime.utcnow() + timedelta(days=365*5),  # Valido per 5 anni
         revocation_id=str(uuid.uuid4())
     )
     
-    # Sign the credential
+    # Firma la credenziale
     credential_dict = {
         "uuid": credential.uuid,
         "issuer_id": credential.issuer_id,
@@ -205,11 +205,11 @@ def issue_credential():
     }
     credential.signature = sign_data(current_user.private_key, credential_dict)
     
-    # Save to database
+    # Salva nel database
     db.session.add(credential)
     db.session.commit()
     
-    # Add to blockchain
+    # Aggiungi alla blockchain
     blockchain = SimpleBlockchain()
     credential.blockchain_reference = blockchain.add_credential(credential)
     db.session.commit()
@@ -217,39 +217,39 @@ def issue_credential():
     return jsonify({
         "success": True,
         "credential_uuid": credential.uuid,
-        "message": "Credential issued successfully"
+        "message": "Credenziale emessa con successo"
     })
 
 @app.route('/issuer/revoke_credential', methods=['POST'])
 @login_required
 def revoke_credential():
     if current_user.role != 'issuer':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     data = request.json
     credential_uuid = data.get('credential_uuid')
     reason = data.get('reason')
     
     if not credential_uuid or not reason:
-        return jsonify({"error": "Missing required fields"}), 400
+        return jsonify({"error": "Campi obbligatori mancanti"}), 400
     
-    # Get credential
+    # Ottieni credenziale
     credential = Credential.query.filter_by(uuid=credential_uuid, issuer_id=current_user.id).first()
     if not credential:
-        return jsonify({"error": "Credential not found"}), 404
+        return jsonify({"error": "Credenziale non trovata"}), 404
     
-    # Create revocation record
+    # Crea record di revoca
     revocation = RevocationRecord(
         credential_uuid=credential_uuid,
         reason=reason,
         revoker_id=current_user.id
     )
     
-    # Add to blockchain
+    # Aggiungi alla blockchain
     blockchain = SimpleBlockchain()
     revocation.transaction_hash = blockchain.revoke_credential(credential_uuid, reason, current_user.id)
     
-    # Update credential status
+    # Aggiorna stato della credenziale
     credential.status = "revoked"
     
     db.session.add(revocation)
@@ -257,15 +257,15 @@ def revoke_credential():
     
     return jsonify({
         "success": True,
-        "message": "Credential revoked successfully"
+        "message": "Credenziale revocata con successo"
     })
 
-# Student Routes
+# Route Studente
 @app.route('/student')
 @login_required
 def student_dashboard():
     if current_user.role != 'student':
-        flash('Unauthorized access.')
+        flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
     
     credentials = Credential.query.filter_by(student_id=current_user.id).all()
@@ -279,11 +279,11 @@ def student_dashboard():
 @login_required
 def view_credential(uuid):
     if current_user.role != 'student':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     credential = Credential.query.filter_by(uuid=uuid, student_id=current_user.id).first()
     if not credential:
-        return jsonify({"error": "Credential not found"}), 404
+        return jsonify({"error": "Credenziale non trovata"}), 404
     
     return jsonify(credential.to_dict())
 
@@ -291,7 +291,7 @@ def view_credential(uuid):
 @login_required
 def share_credential():
     if current_user.role != 'student':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     data = request.json
     credential_uuid = data.get('credential_uuid')
@@ -299,27 +299,27 @@ def share_credential():
     fields_to_disclose = data.get('fields_to_disclose', [])
     
     if not credential_uuid or not verifier_id:
-        return jsonify({"error": "Missing required fields"}), 400
+        return jsonify({"error": "Campi obbligatori mancanti"}), 400
     
-    # Get credential
+    # Ottieni credenziale
     credential = Credential.query.filter_by(uuid=credential_uuid, student_id=current_user.id).first()
     if not credential:
-        return jsonify({"error": "Credential not found"}), 404
+        return jsonify({"error": "Credenziale non trovata"}), 404
     
-    # Check if credential is revoked
+    # Controlla se la credenziale è revocata
     blockchain = SimpleBlockchain()
     status = blockchain.verify_credential(credential_uuid)
     if status == "revoked":
         return jsonify({
-            "error": "Cannot share revoked credential",
+            "error": "Impossibile condividere una credenziale revocata",
             "status": status
         }), 400
     
-    # Create selective disclosure
+    # Crea informazione selettiva
     disclosed_data = selective_disclosure(credential, fields_to_disclose)
     
-    # In a real app, this would be sent to the verifier
-    # Here we just simulate by creating a session variable
+    # In un'app reale, questo verrebbe inviato al verificatore
+    # Qui simuliamo con una variabile di sessione
     session['shared_credential'] = {
         "disclosed_data": disclosed_data,
         "verifier_id": verifier_id,
@@ -329,19 +329,19 @@ def share_credential():
     
     return jsonify({
         "success": True,
-        "message": "Credential shared successfully",
+        "message": "Credenziale condivisa con successo",
         "disclosed_data": disclosed_data
     })
 
-# Verifier University Routes
+# Route Università Verificatrice
 @app.route('/verifier')
 @login_required
 def verifier_dashboard():
     if current_user.role != 'verifier':
-        flash('Unauthorized access.')
+        flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
     
-    # Get shared credential from session (this is a simulation)
+    # Ottieni credenziale condivisa dalla sessione (questa è una simulazione)
     shared_credential = session.get('shared_credential')
     
     return render_template('verifier.html', 
@@ -351,19 +351,19 @@ def verifier_dashboard():
 @login_required
 def verify_credential():
     if current_user.role != 'verifier':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     data = request.json
     credential_uuid = data.get('credential_uuid')
     
     if not credential_uuid:
-        return jsonify({"error": "Missing credential_uuid"}), 400
+        return jsonify({"error": "Manca credential_uuid"}), 400
     
-    # Check blockchain for credential status
+    # Controlla la blockchain per lo stato della credenziale
     blockchain = SimpleBlockchain()
     status = blockchain.verify_credential(credential_uuid)
     
-    # Get OCSP response
+    # Ottieni risposta OCSP
     ocsp_response = {
         "credential_uuid": credential_uuid
     }
@@ -376,7 +376,7 @@ def verify_credential():
     
     ocsp_result = json.loads(response.data)
     
-    # Combine results
+    # Combina i risultati
     result = {
         "blockchain_status": status,
         "ocsp_status": ocsp_result['responses'][0]['certStatus'],
@@ -386,15 +386,15 @@ def verify_credential():
     
     return jsonify(result)
 
-# Certificate Authority Routes
+# Route Autorità di Certificazione
 @app.route('/ca')
 @login_required
 def ca_dashboard():
     if current_user.role != 'ca':
-        flash('Unauthorized access.')
+        flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
     
-    # Get blockchain status
+    # Ottieni stato blockchain
     blockchain = SimpleBlockchain()
     is_valid = blockchain.is_valid()
     
@@ -410,7 +410,7 @@ def ca_dashboard():
 @login_required
 def blockchain_status():
     if current_user.role != 'ca':
-        return jsonify({"error": "Unauthorized"}), 403
+        return jsonify({"error": "Non autorizzato"}), 403
     
     blockchain = SimpleBlockchain()
     is_valid = blockchain.is_valid()

@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Verifier Dashboard - Erasmus Credentials</title>
+    <title>Università verificatrice</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
 </head>
 <body>
     <div class="container mt-4">
         <div class="row mb-4">
             <div class="col">
-                <h1>Università di Salerno - Verifier Dashboard</h1>
-                <p>Welcome to the credential verification system</p>
-                <a href="/logout" class="btn btn-secondary">Logout</a>
+                <h1>Università verificatrice</h1>
+                <p>Benvenuto nel sistema di verifica delle credenziali</p>
+                <a href="/logout" class="btn btn-secondary">Disconnetti</a>
             </div>
         </div>
         
@@ -18,16 +18,16 @@
             <div class="col-md-6">
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h3>Verify Credential</h3>
+                        <h3>Verifica credenziale</h3>
                     </div>
                     <div class="card-body">
                         <form id="verifyForm">
                             <div class="mb-3">
-                                <label for="credential_uuid" class="form-label">Credential UUID</label>
+                                <label for="credential_uuid" class="form-label">UUID credenziale</label>
                                 <input type="text" class="form-control" id="credential_uuid" name="credential_uuid" required>
                             </div>
                             <div class="d-grid gap-2">
-                                <button type="submit" class="btn btn-primary">Verify Credential</button>
+                                <button type="submit" class="btn btn-primary">Verifica credenziale</button>
                             </div>
                         </form>
                     </div>
@@ -37,23 +37,23 @@
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h3>Shared Credentials</h3>
+                        <h3>Credenziali condivise</h3>
                     </div>
                     <div class="card-body">
                         {% if shared_credential %}
                         <div class="alert alert-info">
-                            <h4>Credential shared by Student {{ shared_credential.shared_by }}</h4>
-                            <p>Shared at: {{ shared_credential.shared_at }}</p>
+                            <h4>Credenziale condivisa dallo studente {{ shared_credential.shared_by }}</h4>
+                            <p>Condivisa il: {{ shared_credential.shared_at }}</p>
                             
-                            <h5 class="mt-3">Disclosed Data:</h5>
+                            <h5 class="mt-3">Dati divulgati:</h5>
                             <pre class="bg-light p-2">{{ shared_credential.disclosed_data | tojson(indent=2) }}</pre>
                             
                             <button class="btn btn-primary mt-2" onclick="verifySharedCredential('{{ shared_credential.disclosed_data.metadati.identificativoUUID }}')">
-                                Verify This Credential
+                                Verifica questa credenziale
                             </button>
                         </div>
                         {% else %}
-                        <p>No credentials have been shared with you yet.</p>
+                        <p>Nessuna credenziale è stata ancora condivisa con te.</p>
                         {% endif %}
                     </div>
                 </div>
@@ -61,13 +61,13 @@
         </div>
     </div>
 
-    <!-- Verification Result Modal -->
+    <!-- Modal Risultato Verifica -->
     <div class="modal fade" id="verifyResultModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Verification Result</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title">Risultato verifica</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
                 </div>
                 <div class="modal-body">
                     <div id="verifyResult"></div>
@@ -107,26 +107,26 @@
                 if (data.valid) {
                     resultHtml = `
                         <div class="alert alert-success">
-                            <h4><i class="bi bi-check-circle"></i> Credential is Valid</h4>
-                            <p>This credential has been verified and is currently active.</p>
+                            <h4><i class="bi bi-check-circle"></i> La credenziale è valida</h4>
+                            <p>Questa credenziale è stata verificata ed è attualmente attiva.</p>
                         </div>
                     `;
                 } else {
                     resultHtml = `
                         <div class="alert alert-danger">
-                            <h4><i class="bi bi-x-circle"></i> Credential is Invalid</h4>
-                            <p>This credential could not be verified or has been revoked.</p>
+                            <h4><i class="bi bi-x-circle"></i> La credenziale non è valida</h4>
+                            <p>Questa credenziale non può essere verificata o è stata revocata.</p>
                         </div>
                     `;
                 }
                 
                 resultHtml += `
                     <div class="mt-3">
-                        <h5>Verification Details:</h5>
+                        <h5>Dettagli Verifica:</h5>
                         <ul class="list-group">
-                            <li class="list-group-item">Blockchain Status: <strong>${data.blockchain_status}</strong></li>
-                            <li class="list-group-item">OCSP Status: <strong>${data.ocsp_status}</strong></li>
-                            <li class="list-group-item">Verified At: <strong>${data.verified_at}</strong></li>
+                            <li class="list-group-item">Stato Blockchain: <strong>${data.blockchain_status}</strong></li>
+                            <li class="list-group-item">Stato OCSP: <strong>${data.ocsp_status}</strong></li>
+                            <li class="list-group-item">Verificato il: <strong>${data.verified_at}</strong></li>
                         </ul>
                     </div>
                 `;
@@ -137,8 +137,8 @@
                 resultModal.show();
             })
             .catch(error => {
-                console.error('Error:', error);
-                alert('Error verifying credential');
+                console.error('Errore:', error);
+                alert('Errore durante la verifica della credenziale');
             });
         }
     </script>

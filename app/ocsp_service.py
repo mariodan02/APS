@@ -9,37 +9,37 @@ ocsp = Blueprint('ocsp', __name__)
 
 @ocsp.route('/api/ocsp/check', methods=['POST'])
 def check_credential():
-    """OCSP endpoint to check credential status"""
+    """Endpoint OCSP per verificare lo stato della credenziale"""
     
-    # Get request data
+    # Ottieni i dati della richiesta
     data = request.json
     if not data or 'credential_uuid' not in data:
         return jsonify({"error": "Missing credential_uuid"}), 400
     
     credential_uuid = data['credential_uuid']
     
-    # Check if credential exists
+    # Verifica se la credenziale esiste
     credential = Credential.query.filter_by(uuid=credential_uuid).first()
     if not credential:
-        # Create unknown status response
+        # Crea una risposta con stato sconosciuto
         return create_ocsp_response(credential_uuid, "unknown", None)
     
-    # Check blockchain for credential status
+    # Verifica nella blockchain lo stato della credenziale
     blockchain = SimpleBlockchain()
     status = blockchain.verify_credential(credential_uuid)
     
-    # Create and store OCSP response
+    # Crea e memorizza la risposta OCSP
     return create_ocsp_response(credential_uuid, status, credential)
 
 def create_ocsp_response(credential_uuid, status, credential=None):
-    """Create an OCSP response for a credential"""
+    """Crea una risposta OCSP per una credenziale"""
     
-    # Get CA user for signing
+    # Ottieni l'utente CA per la firma
     ca_user = User.query.filter_by(role='ca').first()
     if not ca_user:
-        return jsonify({"error": "CA not found"}), 500
+        return jsonify({"error": "CA non trovata"}), 500
     
-    # Prepare response data
+    # Prepara i dati della risposta
     now = datetime.utcnow()
     response_data = {
         "responseStatus": "successful",
@@ -62,16 +62,16 @@ def create_ocsp_response(credential_uuid, status, credential=None):
         ]
     }
     
-    # Sign the response
+    # Firma la risposta
     signature = sign_data(ca_user.private_key, json.dumps(response_data))
     
-    # Add signature to response
+    # Aggiungi la firma alla risposta
     response_data["signature"] = {
         "algorithm": "Ed25519",
         "value": signature
     }
     
-    # Store OCSP response in database
+    # Memorizza la risposta OCSP nel database
     ocsp_response = OCSPResponse(
         credential_uuid=credential_uuid,
         status=status,
