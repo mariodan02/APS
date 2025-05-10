@@ -1,6 +1,7 @@
 # services/revocation_service.py
 import json
 import hashlib
+import fcntl
 import time
 import os
 from datetime import datetime
@@ -46,23 +47,35 @@ class RevocationRegistryService:
     
     def _load_registry(self):
         """Carica il registro dal file"""
+        os.makedirs(os.path.dirname(self.registry_file), exist_ok=True)
+        
         try:
             with open(self.registry_file, 'r') as f:
-                return json.load(f)
+                try:
+                    fcntl.flock(f, fcntl.LOCK_SH)  # Shared lock for reading
+                    registry = json.load(f)
+                    return registry
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)  # Release lock
         except (FileNotFoundError, json.JSONDecodeError):
-            # In caso di errore, crea un nuovo registro
             registry = {
                 "blocks": [self._create_genesis_block()],
                 "revoked_credentials": {}
             }
             self._save_registry(registry)
             return registry
-    
+
     def _save_registry(self, registry):
         """Salva il registro nel file"""
+        os.makedirs(os.path.dirname(self.registry_file), exist_ok=True)
+        
         with open(self.registry_file, 'w') as f:
-            json.dump(registry, f, indent=2)
-    
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX)  # Exclusive lock for writing
+                json.dump(registry, f, indent=2)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)  # Release lock
+
     def _create_block(self, data, previous_block):
         """
         Crea un nuovo blocco nel registro.

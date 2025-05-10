@@ -45,9 +45,22 @@
     document.getElementById('loginForm').addEventListener('submit', function(e) {
         e.preventDefault();
         
-        const username = document.getElementById('username').value;
+        const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value;
         
+        // Validation
+        if (!username) {
+            document.getElementById('loginError').textContent = 'Nome utente richiesto.';
+            document.getElementById('loginError').style.display = 'block';
+            return;
+        }
+        
+        if (!password) {
+            document.getElementById('loginError').textContent = 'Password richiesta.';
+            document.getElementById('loginError').style.display = 'block';
+            return;
+        }
+
         fetch('/api/auth/login', {
             method: 'POST',
             headers: {

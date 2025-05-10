@@ -174,6 +174,10 @@ def page_not_found(e):
 def internal_server_error(e):
     return render_template('500.html'), 500
 
+@app.before_first_request
+def initialize_app():
+    setup_database()
+
 # Endpoint pubblico per verificare lo stato API
 @app.route('/api/status')
 def api_status():
@@ -187,3 +191,4 @@ if __name__ == '__main__':
     with app.app_context():
         setup_database()
     app.run(debug=True)
+

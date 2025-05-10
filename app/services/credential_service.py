@@ -18,18 +18,58 @@ class CredentialService:
             private_key: Chiave privata per firmare (mock per demo)
         
         Returns:
-            Credenziale creata o None in caso di errore
+            Tuple (Credential, str): Credenziale creata e messaggio di errore (None se successo)
         """
         try:
+            # Validazione input
+            if not issuer_id or not isinstance(issuer_id, int):
+                return None, "ID emittente non valido"
+            
+            if not subject_id or not isinstance(subject_id, int):
+                return None, "ID destinatario non valido"
+            
+            if not credential_data or not isinstance(credential_data, dict):
+                return None, "Dati credenziale non validi"
+            
+            # Validazione campi obbligatori
+            required_fields = ["course_code", "exam_date", "exam_score", "ects_credits"]
+            for field in required_fields:
+                if field not in credential_data or not credential_data[field]:
+                    return None, f"Campo '{field}' obbligatorio"
+            
             # Verifica che l'emittente sia un'università
             issuer = User.query.get(issuer_id)
-            if not issuer or not issuer.is_university():
+            if not issuer:
+                return None, "Emittente non trovato"
+            
+            if not issuer.is_university():
                 return None, "Solo le università possono emettere credenziali"
             
             # Verifica che il soggetto sia uno studente
             subject = User.query.get(subject_id)
-            if not subject or not subject.is_student():
+            if not subject:
+                return None, "Destinatario non trovato"
+            
+            if not subject.is_student():
                 return None, "Il destinatario deve essere uno studente"
+            
+            # Validazione dati specifici
+            try:
+                exam_date = datetime.fromisoformat(credential_data["exam_date"])
+                
+                # Verifica che la data non sia nel futuro
+                if exam_date > datetime.utcnow():
+                    return None, "La data dell'esame non può essere nel futuro"
+                    
+            except ValueError:
+                return None, "Formato data esame non valido (richiesto ISO: YYYY-MM-DDTHH:MM:SS)"
+            
+            try:
+                ects_credits = int(credential_data["ects_credits"])
+                if ects_credits <= 0 or ects_credits > 30:
+                    return None, "I crediti ECTS devono essere compresi tra 1 e 30"
+            except ValueError:
+                return None, "I crediti ECTS devono essere un numero intero"
             
             # Genera UUID per la credenziale e per revoca
             credential_uuid = str(uuid.uuid4())
@@ -40,14 +80,21 @@ class CredentialService:
                 "uuid": credential_uuid,
                 "issuer_did": issuer.did,
                 "subject_did": subject.did,
-                "course_code": credential_data.get("course_code"),
-                "exam_date": credential_data.get("exam_date"),
+                "course_code": credential_data["course_code"],
+                "exam_date": credential_data["exam_date"],
                 "timestamp": datetime.utcnow().isoformat()
             }
             
-            # Simula la firma dei dati (in produzione usare chiave privata reale)
+            # Gestione della firma
             mock_private_key = private_key or "-----BEGIN PRIVATE KEY-----\nMOCK_KEY\n-----END PRIVATE KEY-----"
             signature = CryptoService.sign_credential(data_to_sign, mock_private_key)
+            
+            if not signature:
+                return None, "Errore durante la firma della credenziale"
+            
+            # Data di emissione e scadenza
+            issued_at = datetime.utcnow()
+            valid_until = issued_at + timedelta(days=365 * 3)  # 3 anni di validità
             
             # Crea la nuova credenziale
             credential = Credential(
@@ -55,14 +102,14 @@ class CredentialService:
                 version="1.0",
                 issuer_id=issuer_id,
                 subject_id=subject_id,
-                issued_at=datetime.utcnow(),
-                valid_until=datetime.utcnow() + timedelta(days=365 * 3),  # 3 anni di validità
-                course_code=credential_data.get("course_code"),
-                course_iscee_code=credential_data.get("course_iscee_code"),
-                exam_date=datetime.fromisoformat(credential_data.get("exam_date")),
-                exam_score=credential_data.get("exam_score"),
+                issued_at=issued_at,
+                valid_until=valid_until,
+                course_code=credential_data["course_code"],
+                course_iscee_code=credential_data.get("course_iscee_code", ""),
+                exam_date=exam_date,
+                exam_score=credential_data["exam_score"],
                 exam_passed=credential_data.get("exam_passed", True),
-                ects_credits=credential_data.get("ects_credits"),
+                ects_credits=ects_credits,
                 signature=signature,
                 revocation_id=revocation_id
             )
@@ -89,15 +136,18 @@ class CredentialService:
             }
             credential.set_metadata(metadata)
             
-            db.session.add(credential)
-            db.session.commit()
+            try:
+                db.session.add(credential)
+                db.session.commit()
+                return credential, None
+            except Exception as db_error:
+                db.session.rollback()
+                return None, f"Errore durante il salvataggio nel database: {str(db_error)}"
             
-            return credential, None
-        
         except Exception as e:
             db.session.rollback()
-            return None, f"Errore durante l'emissione della credenziale: {str(e)}"
-    
+            return None, f"Errore imprevisto durante l'emissione della credenziale: {str(e)}"
+
     @staticmethod
     def get_credential(credential_id):
         """Ottiene una credenziale dal database"""
