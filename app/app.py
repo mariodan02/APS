@@ -27,14 +27,15 @@ app.register_blueprint(verifier_bp)
 app.register_blueprint(revocation_registry_bp)
 
 # Crea le tabelle del database e inizializza con dati di esempio
-@app.before_first_request
 def setup_database():
-    db.create_all()
-    
-    # Aggiungi dati di esempio solo se il database è vuoto
-    from models import User
-    if User.query.count() == 0:
-        create_sample_data()
+    """Create database tables and initialize with sample data"""
+    with app.app_context():
+        db.create_all()
+        
+        # Add sample data only if the database is empty
+        from models import User
+        if User.query.count() == 0:
+            create_sample_data()
 
 def create_sample_data():
     """Crea dati di esempio per il sistema"""
@@ -183,4 +184,6 @@ def api_status():
     })
 
 if __name__ == '__main__':
+    with app.app_context():
+        setup_database()
     app.run(debug=True)
