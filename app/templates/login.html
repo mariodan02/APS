@@ -1,0 +1,76 @@
+<!-- templates/login.html -->
+{% extends "base.html" %}
+
+{% block title %}Accedi - Credenziali Accademiche{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">Accedi</h4>
+            </div>
+            <div class="card-body">
+                <form id="loginForm">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Nome utente</label>
+                        <input type="text" class="form-control" id="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" required>
+                    </div>
+                    <div class="alert alert-danger" id="loginError" style="display: none;"></div>
+                    <button type="submit" class="btn btn-primary w-100">Accedi</button>
+                </form>
+                <div class="mt-3 text-center">
+                    <p>Non hai un account? <a href="/register">Registrati</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        
+        fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username: username,
+                password: password
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('loginError').textContent = data.error;
+                document.getElementById('loginError').style.display = 'block';
+            } else {
+                // Salva il token JWT
+                localStorage.setItem('token', data.access_token);
+                localStorage.setItem('userRole', data.user.role);
+                localStorage.setItem('userId', data.user.id);
+                localStorage.setItem('username', username);
+                
+                // Reindirizza alla dashboard
+                window.location.href = '/dashboard';
+            }
+        })
+        .catch(error => {
+            document.getElementById('loginError').textContent = 'Errore durante la richiesta al server.';
+            document.getElementById('loginError').style.display = 'block';
+            console.error('Error:', error);
+        });
+    });
+</script>
+{% endblock %}

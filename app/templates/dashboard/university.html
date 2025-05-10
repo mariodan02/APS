@@ -1,0 +1,1291 @@
+<!-- templates/dashboard.html -->
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Credenziali Accademiche{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-3">
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">Menu</h5>
+            </div>
+            <div class="list-group list-group-flush">
+                <!-- Menu per studenti -->
+                <div id="studentMenu" style="display: none;">
+                    <a href="#" class="list-group-item list-group-item-action active" id="viewCredentials">
+                        Le mie credenziali
+                    </a>
+                    <a href="#" class="list-group-item list-group-item-action" id="createPresentation">
+                        Crea presentazione
+                    </a>
+                </div>
+                
+                <!-- Menu per università -->
+                <div id="universityMenu" style="display: none;">
+                    <a href="#" class="list-group-item list-group-item-action active" id="viewIssuedCredentials">
+                        Credenziali emesse
+                    </a>
+                    <a href="#" class="list-group-item list-group-item-action" id="issueCredential">
+                        Emetti credenziale
+                    </a>
+                    <a href="#" class="list-group-item list-group-item-action" id="revokeCredential">
+                        Revoca credenziale
+                    </a>
+                </div>
+                
+                <!-- Menu per verificatori -->
+                <div id="verifierMenu" style="display: none;">
+                    <a href="#" class="list-group-item list-group-item-action active" id="verifyCredential">
+                        Verifica credenziale
+                    </a>
+                    <a href="#" class="list-group-item list-group-item-action" id="verifyPresentation">
+                        Verifica presentazione
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Profilo</h5>
+            </div>
+            <div class="card-body">
+                <h5 id="profileName">Nome utente</h5>
+                <p class="mb-1">Ruolo: <span id="profileRole">-</span></p>
+                <p class="mb-1">DID: <span id="profileDID" style="font-size: 0.8em; word-break: break-all;">-</span></p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-9">
+        <div id="contentArea">
+            <!-- Il contenuto verrà caricato dinamicamente in base al menu selezionato -->
+            <div class="alert alert-info">
+                Seleziona un'opzione dal menu per iniziare.
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Variabili globali
+    let currentUser = null;
+    
+    // Controllo autenticazione
+    document.addEventListener('DOMContentLoaded', function() {
+        const token = localStorage.getItem('token');
+        const userRole = localStorage.getItem('userRole');
+        
+        if (!token) {
+            window.location.href = '/login';
+            return;
+        }
+        
+        // Carica informazioni utente
+        loadUserProfile();
+        
+        // Mostra menu in base al ruolo
+        showRoleMenu(userRole);
+        
+        // Gestione click menu
+        setupMenuHandlers();
+    });
+    
+    function loadUserProfile() {
+        fetch('/api/auth/me', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Sessione scaduta o non valida');
+            }
+            return response.json();
+        })
+        .then(data => {
+            currentUser = data;
+            
+            // Aggiorna UI profilo
+            document.getElementById('profileName').textContent = data.username;
+            document.getElementById('profileRole').textContent = getRoleTranslation(data.role);
+            document.getElementById('profileDID').textContent = data.did || '-';
+            
+            // Carica il contenuto predefinito in base al ruolo
+            loadDefaultContent(data.role);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            // Sessione non valida, reindirizza al login
+            localStorage.removeItem('token');
+            localStorage.removeItem('userRole');
+            window.location.href = '/login';
+        });
+    }
+    
+    function showRoleMenu(role) {
+        // Nascondi tutti i menu
+        document.getElementById('studentMenu').style.display = 'none';
+        document.getElementById('universityMenu').style.display = 'none';
+        document.getElementById('verifierMenu').style.display = 'none';
+        
+        // Mostra menu in base al ruolo
+        if (role === 'student') {
+            document.getElementById('studentMenu').style.display = 'block';
+        } else if (role === 'university') {
+            document.getElementById('universityMenu').style.display = 'block';
+        } else if (role === 'authority') {
+            document.getElementById('verifierMenu').style.display = 'block';
+        }
+    }
+    
+    function setupMenuHandlers() {
+        // Menu studente
+        document.getElementById('viewCredentials')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadStudentCredentials();
+        });
+        
+        document.getElementById('createPresentation')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadCreatePresentation();
+        });
+        
+        // Menu università
+        document.getElementById('viewIssuedCredentials')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadUniversityCredentials();
+        });
+        
+        document.getElementById('issueCredential')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadIssueCredential();
+        });
+        
+        document.getElementById('revokeCredential')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadRevokeCredential();
+        });
+        
+        // Menu verificatore
+        document.getElementById('verifyCredential')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadVerifyCredential();
+        });
+        
+        document.getElementById('verifyPresentation')?.addEventListener('click', function(e) {
+            e.preventDefault();
+            setActiveMenuItem(this);
+            loadVerifyPresentation();
+        });
+    }
+    
+    function setActiveMenuItem(item) {
+        // Rimuovi classe active da tutti gli elementi
+        const menuItems = document.querySelectorAll('.list-group-item');
+        menuItems.forEach(el => el.classList.remove('active'));
+        
+        // Aggiungi classe active all'elemento cliccato
+        item.classList.add('active');
+    }
+    
+    function loadDefaultContent(role) {
+        if (role === 'student') {
+            loadStudentCredentials();
+        } else if (role === 'university') {
+            loadUniversityCredentials();
+        } else if (role === 'authority') {
+            loadVerifyCredential();
+        }
+    }
+    
+    // Funzioni di caricamento contenuto
+    function loadStudentCredentials() {
+        // Implementazione caricamento credenziali studente
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Caricamento...</span></div>';
+        
+        fetch('/api/student/credentials', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => response.json())
+        .then(credentials => {
+            let html = `
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Le mie credenziali</h5>
+                    </div>
+                    <div class="card-body">
+            `;
+            
+            if (credentials.length === 0) {
+                html += `<div class="alert alert-info">Non hai ancora credenziali.</div>`;
+            } else {
+                html += `
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Corso</th>
+                                    <th>Voto</th>
+                                    <th>Data esame</th>
+                                    <th>Crediti</th>
+                                    <th>Università</th>
+                                    <th>Stato</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                credentials.forEach(cred => {
+                    const examDate = new Date(cred.exam_date).toLocaleDateString();
+                    const status = cred.revoked ? 
+                        '<span class="badge bg-danger">Revocata</span>' : 
+                        '<span class="badge bg-success">Valida</span>';
+                    
+                    html += `
+                        <tr>
+                            <td>${cred.course_code}</td>
+                            <td>${cred.exam_score}</td>
+                            <td>${examDate}</td>
+                            <td>${cred.ects_credits}</td>
+                            <td>${cred.issuer || '-'}</td>
+                            <td>${status}</td>
+                            <td>
+                                <button class="btn btn-sm btn-info view-credential" data-id="${cred.id}">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-primary create-presentation" data-id="${cred.id}" ${cred.revoked ? 'disabled' : ''}>
+                                    <i class="fas fa-share-alt"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            contentArea.innerHTML = html;
+            
+            // Aggiungi gestori eventi per i pulsanti
+            document.querySelectorAll('.view-credential').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const credentialId = this.getAttribute('data-id');
+                    viewCredentialDetails(credentialId);
+                });
+            });
+            
+            document.querySelectorAll('.create-presentation').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const credentialId = this.getAttribute('data-id');
+                    openCreatePresentationModal(credentialId);
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            contentArea.innerHTML = `<div class="alert alert-danger">Errore durante il caricamento delle credenziali.</div>`;
+        });
+    }
+    
+    function loadCreatePresentation() {
+        // Implementazione creazione presentazione
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Crea presentazione selettiva</h5>
+                </div>
+                <div class="card-body">
+                    <p>Seleziona una credenziale e i campi da condividere per creare una presentazione selettiva.</p>
+                    <div id="credentialSelectArea">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Caricamento...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Carica le credenziali disponibili
+        fetch('/api/student/credentials', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => response.json())
+        .then(credentials => {
+            let html = '';
+            
+            if (credentials.length === 0) {
+                html = `<div class="alert alert-info">Non hai ancora credenziali per creare presentazioni.</div>`;
+            } else {
+                // Filtra solo le credenziali valide
+                const validCredentials = credentials.filter(cred => !cred.revoked);
+                
+                if (validCredentials.length === 0) {
+                    html = `<div class="alert alert-warning">Non hai credenziali valide disponibili.</div>`;
+                } else {
+                    html = `
+                        <form id="createPresentationForm">
+                            <div class="mb-3">
+                                <label for="credentialSelect" class="form-label">Seleziona credenziale</label>
+                                <select class="form-select" id="credentialSelect" required>
+                                    <option value="" disabled selected>Scegli una credenziale</option>
+                    `;
+                    
+                    validCredentials.forEach(cred => {
+                        html += `<option value="${cred.id}">${cred.course_code} - ${cred.exam_score}</option>`;
+                    });
+                    
+                    html += `
+                                </select>
+                            </div>
+                            
+                            <div id="selectiveFieldsArea" style="display: none;">
+                                <div class="card mb-3">
+                                    <div class="card-header bg-light">
+                                        <h6 class="mb-0">Seleziona i campi da condividere</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="emittente" id="checkEmittente">
+                                            <label class="form-check-label" for="checkEmittente">
+                                                Emittente (Università)
+                                            </label>
+                                        </div>
+                                        
+                                        <h6 class="mt-3">Attributi accademici:</h6>
+                                        
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="attributiAccademici.codiceCorso" id="checkCorso">
+                                            <label class="form-check-label" for="checkCorso">
+                                                Codice del corso
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="attributiAccademici.votoEsame" id="checkVoto">
+                                            <label class="form-check-label" for="checkVoto">
+                                                Voto dell'esame
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="attributiAccademici.dataSvolgimento" id="checkData">
+                                            <label class="form-check-label" for="checkData">
+                                                Data dell'esame
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" value="attributiAccademici.creditiECTS" id="checkCrediti">
+                                            <label class="form-check-label" for="checkCrediti">
+                                                Crediti ECTS
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-danger" id="presentationError" style="display: none;"></div>
+                                
+                                <button type="submit" class="btn btn-primary">Genera presentazione</button>
+                            </div>
+                        </form>
+                        
+                        <div id="presentationResult" style="display: none;">
+                            <div class="alert alert-success mb-3">
+                                Presentazione selettiva generata con successo!
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Presentazione JSON:</label>
+                                <div class="form-control" style="height: 200px; overflow-y: auto; font-family: monospace;" id="presentationJson"></div>
+                            </div>
+                            
+                            <button class="btn btn-secondary mb-3" id="copyJson">
+                                <i class="fas fa-copy me-2"></i> Copia JSON
+                            </button>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Link alla presentazione:</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="presentationLink" readonly>
+                                    <button class="btn btn-outline-secondary" type="button" id="copyLink">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                </div>
+                                <div class="form-text">Condividi questo link con chi deve verificare la credenziale.</div>
+                            </div>
+                            
+                            <button class="btn btn-primary" id="createNewPresentation">Crea un'altra presentazione</button>
+                        </div>
+                    `;
+                }
+            }
+            
+            document.getElementById('credentialSelectArea').innerHTML = html;
+            
+            // Gestione eventi
+            const credentialSelect = document.getElementById('credentialSelect');
+            if (credentialSelect) {
+                credentialSelect.addEventListener('change', function() {
+                    document.getElementById('selectiveFieldsArea').style.display = 'block';
+                });
+            }
+            
+            const presentationForm = document.getElementById('createPresentationForm');
+            if (presentationForm) {
+                presentationForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    // Ottieni i campi selezionati
+                    const credentialId = document.getElementById('credentialSelect').value;
+                    const disclosedFields = [];
+                    
+                    document.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
+                        disclosedFields.push(checkbox.value);
+                    });
+                    
+                    if (disclosedFields.length === 0) {
+                        document.getElementById('presentationError').textContent = 'Seleziona almeno un campo da condividere.';
+                        document.getElementById('presentationError').style.display = 'block';
+                        return;
+                    }
+                    
+                    // Crea la presentazione
+                    fetch(`/api/student/credentials/${credentialId}/selective`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        },
+                        body: JSON.stringify({
+                            disclosed_fields: disclosedFields
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(presentation => {
+                        document.getElementById('createPresentationForm').style.display = 'none';
+                        document.getElementById('presentationResult').style.display = 'block';
+                        
+                        // Mostra il JSON
+                        document.getElementById('presentationJson').textContent = JSON.stringify(presentation, null, 2);
+                        
+                        // Genera link (simulato)
+                        const presentationId = Math.random().toString(36).substring(2, 15);
+                        document.getElementById('presentationLink').value = `${window.location.origin}/verify/${presentationId}`;
+                        
+                        // Gestione copia
+                        document.getElementById('copyJson').addEventListener('click', function() {
+                            navigator.clipboard.writeText(JSON.stringify(presentation));
+                            this.innerHTML = '<i class="fas fa-check me-2"></i> Copiato!';
+                            setTimeout(() => {
+                                this.innerHTML = '<i class="fas fa-copy me-2"></i> Copia JSON';
+                            }, 2000);
+                        });
+                        
+                        document.getElementById('copyLink').addEventListener('click', function() {
+                            navigator.clipboard.writeText(document.getElementById('presentationLink').value);
+                            this.innerHTML = '<i class="fas fa-check"></i>';
+                            setTimeout(() => {
+                                this.innerHTML = '<i class="fas fa-copy"></i>';
+                            }, 2000);
+                        });
+                        
+                        // Nuova presentazione
+                        document.getElementById('createNewPresentation').addEventListener('click', function() {
+                            loadCreatePresentation();
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        document.getElementById('presentationError').textContent = 'Errore durante la creazione della presentazione.';
+                        document.getElementById('presentationError').style.display = 'block';
+                    });
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('credentialSelectArea').innerHTML = `
+                <div class="alert alert-danger">Errore durante il caricamento delle credenziali.</div>
+            `;
+        });
+    }
+    
+    function loadUniversityCredentials() {
+        // Implementazione caricamento credenziali emesse da università
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Caricamento...</span></div>';
+        
+        fetch('/api/university/credentials/issued', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => response.json())
+        .then(credentials => {
+            let html = `
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Credenziali emesse</h5>
+                    </div>
+                    <div class="card-body">
+            `;
+            
+            if (credentials.length === 0) {
+                html += `<div class="alert alert-info">Non hai ancora emesso credenziali.</div>`;
+            } else {
+                html += `
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Corso</th>
+                                    <th>Studente</th>
+                                    <th>Voto</th>
+                                    <th>Data esame</th>
+                                    <th>Data emissione</th>
+                                    <th>Stato</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                credentials.forEach(cred => {
+                    const examDate = new Date(cred.exam_date).toLocaleDateString();
+                    const issuedDate = new Date(cred.issued_at).toLocaleDateString();
+                    const status = cred.revoked ? 
+                        '<span class="badge bg-danger">Revocata</span>' : 
+                        '<span class="badge bg-success">Valida</span>';
+                    
+                    html += `
+                        <tr>
+                            <td>${cred.course_code}</td>
+                            <td>${cred.student || '-'}</td>
+                            <td>${cred.exam_score}</td>
+                            <td>${examDate}</td>
+                            <td>${issuedDate}</td>
+                            <td>${status}</td>
+                            <td>
+                                <button class="btn btn-sm btn-info view-issued-credential" data-uuid="${cred.uuid}">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                ${!cred.revoked ? `
+                                <button class="btn btn-sm btn-danger revoke-credential" data-uuid="${cred.uuid}">
+                                    <i class="fas fa-ban"></i>
+                                </button>
+                                ` : ''}
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            contentArea.innerHTML = html;
+            
+            // Aggiungi gestori eventi per i pulsanti
+            document.querySelectorAll('.view-issued-credential').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const credentialUuid = this.getAttribute('data-uuid');
+                    viewIssuedCredentialDetails(credentialUuid);
+                });
+            });
+            
+            document.querySelectorAll('.revoke-credential').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const credentialUuid = this.getAttribute('data-uuid');
+                    openRevokeCredentialModal(credentialUuid);
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            contentArea.innerHTML = `<div class="alert alert-danger">Errore durante il caricamento delle credenziali emesse.</div>`;
+        });
+    }
+    
+    function loadIssueCredential() {
+        // Implementazione emissione credenziale
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Emetti nuova credenziale</h5>
+                </div>
+                <div class="card-body">
+                    <div id="studentListArea">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Caricamento studenti...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Carica la lista degli studenti
+        fetch('/api/university/students', {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => response.json())
+        .then(students => {
+            let html = '';
+            
+            if (students.length === 0) {
+                html = `<div class="alert alert-info">Non ci sono studenti registrati nel sistema.</div>`;
+            } else {
+                html = `
+                    <form id="issueCredentialForm">
+                        <div class="mb-3">
+                            <label for="studentSelect" class="form-label">Seleziona studente</label>
+                            <select class="form-select" id="studentSelect" required>
+                                <option value="" disabled selected>Scegli uno studente</option>
+                `;
+                
+                students.forEach(student => {
+                    html += `<option value="${student.id}">${student.username} (${student.pseudonym || 'No pseudonimo'})</option>`;
+                });
+                
+                html += `
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="courseCode" class="form-label">Codice corso</label>
+                            <input type="text" class="form-control" id="courseCode" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="courseIsceeCode" class="form-label">Codice ISCEE (opzionale)</label>
+                            <input type="text" class="form-control" id="courseIsceeCode">
+                            <div class="form-text">Codice standard internazionale di classificazione dell'educazione.</div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="examDate" class="form-label">Data dell'esame</label>
+                                    <input type="date" class="form-control" id="examDate" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="examScore" class="form-label">Voto</label>
+                                    <input type="text" class="form-control" id="examScore" required placeholder="es. 28/30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="ectsCredits" class="form-label">Crediti ECTS</label>
+                                    <input type="number" class="form-control" id="ectsCredits" required min="1" max="30">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="examPassed" class="form-label">Stato dell'esame</label>
+                                    <select class="form-select" id="examPassed" required>
+                                        <option value="true" selected>Superato</option>
+                                        <option value="false">Non superato</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-danger" id="issueError" style="display: none;"></div>
+                        
+                        <button type="submit" class="btn btn-primary">Emetti credenziale</button>
+                    </form>
+                    
+                    <div id="issueResult" style="display: none;">
+                        <div class="alert alert-success mb-3">
+                            <i class="fas fa-check-circle me-2"></i>
+                            Credenziale emessa con successo!
+                        </div>
+                        
+                        <div class="card mb-3">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">Dettagli credenziale</h6>
+                            </div>
+                            <div class="card-body">
+                                <p><strong>ID:</strong> <span id="resultCredentialId"></span></p>
+                                <p><strong>UUID:</strong> <span id="resultCredentialUuid"></span></p>
+                                <p><strong>Emittente:</strong> ${currentUser ? currentUser.username : '-'}</p>
+                                <p><strong>Studente:</strong> <span id="resultStudentName"></span></p>
+                                <p><strong>Corso:</strong> <span id="resultCourseCode"></span></p>
+                                <p><strong>Data emissione:</strong> <span id="resultIssueDate"></span></p>
+                            </div>
+                        </div>
+                        
+                        <button class="btn btn-primary" id="issueAnotherCredential">Emetti un'altra credenziale</button>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('studentListArea').innerHTML = html;
+            
+            // Gestione eventi
+            const issueForm = document.getElementById('issueCredentialForm');
+            if (issueForm) {
+                issueForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const studentId = document.getElementById('studentSelect').value;
+                    const courseCode = document.getElementById('courseCode').value;
+                    const courseIsceeCode = document.getElementById('courseIsceeCode').value;
+                    const examDate = document.getElementById('examDate').value;
+                    const examScore = document.getElementById('examScore').value;
+                    const ectsCredits = document.getElementById('ectsCredits').value;
+                    const examPassed = document.getElementById('examPassed').value === 'true';
+                    
+                    // Emetti la credenziale
+                    fetch('/api/university/credentials/issue', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        },
+                        body: JSON.stringify({
+                            subject_id: studentId,
+                            course_code: courseCode,
+                            course_iscee_code: courseIsceeCode,
+                            exam_date: examDate + 'T00:00:00Z',  // Formato ISO
+                            exam_score: examScore,
+                            exam_passed: examPassed,
+                            ects_credits: parseInt(ectsCredits)
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            document.getElementById('issueError').textContent = data.error;
+                            document.getElementById('issueError').style.display = 'block';
+                        } else {
+                            // Mostra risultato
+                            document.getElementById('issueCredentialForm').style.display = 'none';
+                            document.getElementById('issueResult').style.display = 'block';
+                            
+                            document.getElementById('resultCredentialId').textContent = data.credential_id;
+                            document.getElementById('resultCredentialUuid').textContent = data.credential_uuid;
+                            document.getElementById('resultStudentName').textContent = 
+                                document.getElementById('studentSelect').options[
+                                    document.getElementById('studentSelect').selectedIndex
+                                ].text;
+                            document.getElementById('resultCourseCode').textContent = courseCode;
+                            document.getElementById('resultIssueDate').textContent = new Date().toLocaleString();
+                            
+                            // Gestione nuova emissione
+                            document.getElementById('issueAnotherCredential').addEventListener('click', function() {
+                                loadIssueCredential();
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        document.getElementById('issueError').textContent = 'Errore durante l\'emissione della credenziale.';
+                        document.getElementById('issueError').style.display = 'block';
+                    });
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('studentListArea').innerHTML = `
+                <div class="alert alert-danger">Errore durante il caricamento degli studenti.</div>
+            `;
+        });
+    }
+    
+    function loadRevokeCredential() {
+        // Implementazione revoca credenziale
+        loadUniversityCredentials();  // Riutilizza la stessa vista
+    }
+    
+    function loadVerifyCredential() {
+        // Implementazione verifica credenziale
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Verifica credenziale</h5>
+                </div>
+                <div class="card-body">
+                    <form id="verifyCredentialForm">
+                        <div class="mb-3">
+                            <label for="credentialUuid" class="form-label">UUID della credenziale</label>
+                            <input type="text" class="form-control" id="credentialUuid" required placeholder="es. f47ac10b-58cc-4372-a567-0e02b2c3d479">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="publicKey" class="form-label">Chiave pubblica (opzionale)</label>
+                            <textarea class="form-control" id="publicKey" rows="3" placeholder="Inserisci la chiave pubblica per verificare la firma"></textarea>
+                            <div class="form-text">Se non fornita, verrà verificata solo la validità e lo stato di revoca.</div>
+                        </div>
+                        
+                        <div class="alert alert-danger" id="verifyError" style="display: none;"></div>
+                        
+                        <button type="submit" class="btn btn-primary">Verifica</button>
+                    </form>
+                    
+                    <div id="verifyResult" style="display: none;">
+                        <div class="alert mb-3" id="verifyResultAlert">
+                            <i class="fas me-2" id="verifyResultIcon"></i>
+                            <span id="verifyResultMessage"></span>
+                        </div>
+                        
+                        <button class="btn btn-primary" id="verifyAnotherCredential">Verifica un'altra credenziale</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Gestione eventi
+        const verifyForm = document.getElementById('verifyCredentialForm');
+        if (verifyForm) {
+            verifyForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const credentialUuid = document.getElementById('credentialUuid').value;
+                const publicKey = document.getElementById('publicKey').value;
+                
+                // Verifica la credenziale
+                fetch('/api/verifier/verify', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({
+                        credential_uuid: credentialUuid,
+                        public_key: publicKey || null
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('verifyCredentialForm').style.display = 'none';
+                    document.getElementById('verifyResult').style.display = 'block';
+                    
+                    const resultAlert = document.getElementById('verifyResultAlert');
+                    const resultIcon = document.getElementById('verifyResultIcon');
+                    const resultMessage = document.getElementById('verifyResultMessage');
+                    
+                    if (data.valid) {
+                        resultAlert.className = 'alert alert-success mb-3';
+                        resultIcon.className = 'fas fa-check-circle me-2';
+                        resultMessage.textContent = data.message;
+                    } else {
+                        resultAlert.className = 'alert alert-danger mb-3';
+                        resultIcon.className = 'fas fa-times-circle me-2';
+                        resultMessage.textContent = data.message;
+                    }
+                    
+                    // Gestione nuova verifica
+                    document.getElementById('verifyAnotherCredential').addEventListener('click', function() {
+                        loadVerifyCredential();
+                    });
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('verifyError').textContent = 'Errore durante la verifica della credenziale.';
+                    document.getElementById('verifyError').style.display = 'block';
+                });
+            });
+        }
+    }
+    
+    function loadVerifyPresentation() {
+        // Implementazione verifica presentazione
+        const contentArea = document.getElementById('contentArea');
+        contentArea.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Verifica presentazione selettiva</h5>
+                </div>
+                <div class="card-body">
+                    <form id="verifyPresentationForm">
+                        <div class="mb-3">
+                            <label for="presentationJson" class="form-label">JSON della presentazione</label>
+                            <textarea class="form-control" id="presentationJson" rows="10" required placeholder='{"metadati": {...}, "attributiAccademici": {...}}'></textarea>
+                        </div>
+                        
+                        <div class="alert alert-danger" id="verifyPresentationError" style="display: none;"></div>
+                        
+                        <button type="submit" class="btn btn-primary">Verifica</button>
+                    </form>
+                    
+                    <div id="verifyPresentationResult" style="display: none;">
+                        <div class="alert mb-3" id="verifyPresentationResultAlert">
+                            <i class="fas me-2" id="verifyPresentationResultIcon"></i>
+                            <span id="verifyPresentationResultMessage"></span>
+                        </div>
+                        
+                        <div id="presentationDetailsArea"></div>
+                        
+                        <button class="btn btn-primary mt-3" id="verifyAnotherPresentation">Verifica un'altra presentazione</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Gestione eventi
+        const verifyForm = document.getElementById('verifyPresentationForm');
+        if (verifyForm) {
+            verifyForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const presentationJsonStr = document.getElementById('presentationJson').value;
+                let presentationJson;
+                
+                try {
+                    presentationJson = JSON.parse(presentationJsonStr);
+                } catch (error) {
+                    document.getElementById('verifyPresentationError').textContent = 'JSON non valido. Controlla il formato.';
+                    document.getElementById('verifyPresentationError').style.display = 'block';
+                    return;
+                }
+                
+                // Verifica la presentazione
+                fetch('/api/verifier/verify-presentation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({
+                        presentation: presentationJson
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('verifyPresentationForm').style.display = 'none';
+                    document.getElementById('verifyPresentationResult').style.display = 'block';
+                    
+                    const resultAlert = document.getElementById('verifyPresentationResultAlert');
+                    const resultIcon = document.getElementById('verifyPresentationResultIcon');
+                    const resultMessage = document.getElementById('verifyPresentationResultMessage');
+                    
+                    if (data.valid) {
+                        resultAlert.className = 'alert alert-success mb-3';
+                        resultIcon.className = 'fas fa-check-circle me-2';
+                        resultMessage.textContent = data.message;
+                        
+                        // Mostra dettagli presentazione
+                        let detailsHtml = `
+                            <div class="card">
+                                <div class="card-header bg-light">
+                                    <h6 class="mb-0">Dettagli presentazione verificata</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>UUID Credenziale:</strong> ${presentationJson.metadati.identificativoUUID || '-'}</p>
+                        `;
+                        
+                        // Mostra campi divulgati
+                        detailsHtml += `<p><strong>Campi divulgati:</strong></p>`;
+                        
+                        if (presentationJson.emittente) {
+                            detailsHtml += `<p>✓ Dati dell'emittente</p>`;
+                        }
+                        
+                        if (presentationJson.attributiAccademici) {
+                            const attrs = presentationJson.attributiAccademici;
+                            
+                            if (attrs.codiceCorso) {
+                                detailsHtml += `<p>✓ Codice corso: ${JSON.stringify(attrs.codiceCorso)}</p>`;
+                            }
+                            
+                            if (attrs.votoEsame) {
+                                detailsHtml += `<p>✓ Voto esame: ${JSON.stringify(attrs.votoEsame)}</p>`;
+                            }
+                            
+                            if (attrs.dataSvolgimento) {
+                                detailsHtml += `<p>✓ Data svolgimento: ${attrs.dataSvolgimento}</p>`;
+                            }
+                            
+                            if (attrs.creditiECTS) {
+                                detailsHtml += `<p>✓ Crediti ECTS: ${attrs.creditiECTS}</p>`;
+                            }
+                        }
+                        
+                        detailsHtml += `
+                                </div>
+                            </div>
+                        `;
+                        
+                        document.getElementById('presentationDetailsArea').innerHTML = detailsHtml;
+                    } else {
+                        resultAlert.className = 'alert alert-danger mb-3';
+                        resultIcon.className = 'fas fa-times-circle me-2';
+                        resultMessage.textContent = data.message;
+                        
+                        document.getElementById('presentationDetailsArea').innerHTML = '';
+                    }
+                    
+                    // Gestione nuova verifica
+                    document.getElementById('verifyAnotherPresentation').addEventListener('click', function() {
+                        loadVerifyPresentation();
+                    });
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('verifyPresentationError').textContent = 'Errore durante la verifica della presentazione.';
+                    document.getElementById('verifyPresentationError').style.display = 'block';
+                });
+            });
+        }
+    }
+    
+    // Funzioni helper
+    function getRoleTranslation(role) {
+        switch (role) {
+            case 'student': return 'Studente';
+            case 'university': return 'Università';
+            case 'authority': return 'Autorità';
+            default: return role;
+        }
+    }
+    
+    function viewCredentialDetails(credentialId) {
+        // Implementazione visualizzazione dettagli credenziale (per studente)
+        fetch(`/api/student/credentials/${credentialId}`, {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('token')
+            }
+        })
+        .then(response => response.json())
+        .then(credential => {
+            // Crea una modale per mostrare i dettagli
+            const modalHtml = `
+                <div class="modal fade" id="credentialModal" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-primary text-white">
+                                <h5 class="modal-title">Dettagli credenziale</h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3">
+                                    <h6>Metadati</h6>
+                                    <p><strong>Versione:</strong> ${credential.metadati.versione}</p>
+                                    <p><strong>UUID:</strong> ${credential.metadati.identificativoUUID}</p>
+                                    <p><strong>Data emissione:</strong> ${new Date(credential.metadati.timestampEmissione).toLocaleString()}</p>
+                                    <p><strong>Validità fino al:</strong> ${credential.metadati.dataFineValiditaChiave ? new Date(credential.metadati.dataFineValiditaChiave).toLocaleDateString() : '-'}</p>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h6>Emittente</h6>
+                                    <p><strong>DID:</strong> ${credential.emittente?.didUniversita || '-'}</p>
+                                    <p><strong>URL documento DID:</strong> ${credential.emittente?.urlDocumentoDID || '-'}</p>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h6>Attributi accademici</h6>
+                                    <p><strong>Codice corso:</strong> ${credential.attributiAccademici.codiceCorso.codiceInterno} (ISCEE: ${credential.attributiAccademici.codiceCorso.codiceISCED || '-'})</p>
+                                    <p><strong>Voto:</strong> ${credential.attributiAccademici.votoEsame.punteggio} (${credential.attributiAccademici.votoEsame.superato ? 'Superato' : 'Non superato'})</p>
+                                    <p><strong>Data svolgimento:</strong> ${new Date(credential.attributiAccademici.dataSvolgimento).toLocaleDateString()}</p>
+                                    <p><strong>Crediti ECTS:</strong> ${credential.attributiAccademici.creditiECTS}</p>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Chiudi</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Aggiungi la modale al DOM
+            const modalElement = document.createElement('div');
+            modalElement.innerHTML = modalHtml;
+            document.body.appendChild(modalElement);
+            
+            // Mostra la modale
+            const modal = new bootstrap.Modal(document.getElementById('credentialModal'));
+            modal.show();
+            
+            // Rimuovi la modale dal DOM quando viene chiusa
+            document.getElementById('credentialModal').addEventListener('hidden.bs.modal', function() {
+                document.body.removeChild(modalElement);
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Errore durante il caricamento dei dettagli della credenziale.');
+        });
+    }
+    
+    function viewIssuedCredentialDetails(credentialUuid) {
+        // Implementazione visualizzazione dettagli credenziale emessa (per università)
+        // Nella versione completa, questa farebbe una chiamata API separata
+        // Per semplicità, qui simuliamo una modale simile a quella dello studente
+        
+        const modalHtml = `
+            <div class="modal fade" id="issuedCredentialModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title">Dettagli credenziale emessa</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                Dettagli della credenziale con UUID: ${credentialUuid}
+                            </div>
+                            
+                            <div class="mb-3">
+                                <p>In un'implementazione completa, qui verrebbero mostrati i dettagli completi della credenziale emessa.</p>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Chiudi</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Aggiungi la modale al DOM
+        const modalElement = document.createElement('div');
+        modalElement.innerHTML = modalHtml;
+        document.body.appendChild(modalElement);
+        
+        // Mostra la modale
+        const modal = new bootstrap.Modal(document.getElementById('issuedCredentialModal'));
+        modal.show();
+        
+        // Rimuovi la modale dal DOM quando viene chiusa
+        document.getElementById('issuedCredentialModal').addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modalElement);
+        });
+    }
+    
+    function openRevokeCredentialModal(credentialUuid) {
+        // Implementazione modale di revoca credenziale
+        const modalHtml = `
+            <div class="modal fade" id="revokeModal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header bg-danger text-white">
+                            <h5 class="modal-title">Revoca credenziale</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Sei sicuro di voler revocare la credenziale con UUID:</p>
+                            <p class="fw-bold">${credentialUuid}</p>
+                            <p>Questa operazione non può essere annullata!</p>
+                            
+                            <div class="mb-3">
+                                <label for="revocationReason" class="form-label">Motivo della revoca</label>
+                                <textarea class="form-control" id="revocationReason" rows="3" placeholder="Specifica il motivo della revoca..."></textarea>
+                            </div>
+                            
+                            <div class="alert alert-danger" id="revokeModalError" style="display: none;"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+                            <button type="button" class="btn btn-danger" id="confirmRevoke">Revoca credenziale</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Aggiungi la modale al DOM
+        const modalElement = document.createElement('div');
+        modalElement.innerHTML = modalHtml;
+        document.body.appendChild(modalElement);
+        
+        // Mostra la modale
+        const modal = new bootstrap.Modal(document.getElementById('revokeModal'));
+        modal.show();
+        
+        // Gestione conferma revoca
+        document.getElementById('confirmRevoke').addEventListener('click', function() {
+            const reason = document.getElementById('revocationReason').value;
+            
+            // Revoca la credenziale
+            fetch(`/api/university/credentials/${credentialUuid}/revoke`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                },
+                body: JSON.stringify({
+                    reason: reason
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('revokeModalError').textContent = data.error;
+                    document.getElementById('revokeModalError').style.display = 'block';
+                } else {
+                    // Chiudi la modale
+                    modal.hide();
+                    
+                    // Ricarica la lista delle credenziali
+                    loadUniversityCredentials();
+                    
+                    // Mostra notifica di successo
+                    alert('Credenziale revocata con successo!');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('revokeModalError').textContent = 'Errore durante la revoca della credenziale.';
+                document.getElementById('revokeModalError').style.display = 'block';
+            });
+        });
+        
+        // Rimuovi la modale dal DOM quando viene chiusa
+        document.getElementById('revokeModal').addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modalElement);
+        });
+    }
+    
+    function openCreatePresentationModal(credentialId) {
+        // Implementazione modale di creazione presentazione selettiva
+        // Reindirizza alla pagina di creazione presentazione
+        document.getElementById('createPresentation').click();
+    }
+</script>
+{% endblock %}
