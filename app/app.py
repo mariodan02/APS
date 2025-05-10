@@ -30,15 +30,6 @@ app.register_blueprint(ocsp)
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Initialize database and create sample data
-@app.before_first_request
-def create_tables():
-    db.create_all()
-    
-    # Check if we already have sample data
-    if User.query.count() == 0:
-        create_sample_data()
-
 def create_sample_data():
     """Create sample data for the application"""
     
@@ -105,6 +96,13 @@ def create_sample_data():
     
     # Initialize blockchain
     blockchain = SimpleBlockchain()
+
+# Initialize database and create sample data
+with app.app_context():
+    db.create_all()
+    # Check if we already have sample data
+    if User.query.count() == 0:
+        create_sample_data()
 
 # Routes
 @app.route('/')
