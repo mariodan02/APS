@@ -1,4 +1,4 @@
-<!-- templates/register.html -->
+<!-- templates/register.html (modified) -->
 {% extends "base.html" %}
 
 {% block title %}Registrati - Credenziali Accademiche{% endblock %}
@@ -11,6 +11,11 @@
                 <h4 class="mb-0">Registrati</h4>
             </div>
             <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Gli studenti non possono registrarsi autonomamente. Contatta la tua università per accedere con le credenziali assegnate.
+                </div>
+                
                 <form id="registerForm">
                     <div class="mb-3">
                         <label for="username" class="form-label">Nome utente</label>
@@ -28,23 +33,9 @@
                         <label for="role" class="form-label">Ruolo</label>
                         <select class="form-select" id="role" required>
                             <option value="" disabled selected>Seleziona un ruolo</option>
-                            <option value="student">Studente</option>
                             <option value="university">Università</option>
                             <option value="authority">Autorità</option>
                         </select>
-                    </div>
-                    
-                    <!-- Campi per studenti -->
-                    <div id="studentFields" style="display: none;">
-                        <div class="mb-3">
-                            <label for="fullName" class="form-label">Nome completo</label>
-                            <input type="text" class="form-control" id="fullName">
-                        </div>
-                        <div class="mb-3">
-                            <label for="idReal" class="form-label">ID reale (per hash)</label>
-                            <input type="text" class="form-control" id="idReal">
-                            <div class="form-text">Questo verrà trasformato in un hash per privacy.</div>
-                        </div>
                     </div>
                     
                     <!-- Campi per università -->
@@ -76,13 +67,9 @@
     // Mostra/nascondi campi in base al ruolo
     document.getElementById('role').addEventListener('change', function() {
         const role = this.value;
-        
-        document.getElementById('studentFields').style.display = 'none';
         document.getElementById('universityFields').style.display = 'none';
         
-        if (role === 'student') {
-            document.getElementById('studentFields').style.display = 'block';
-        } else if (role === 'university') {
+        if (role === 'university') {
             document.getElementById('universityFields').style.display = 'block';
         }
     });
@@ -104,10 +91,7 @@
         };
         
         // Aggiungi campi specifici del ruolo
-        if (role === 'student') {
-            data.full_name = document.getElementById('fullName').value;
-            data.id_real = document.getElementById('idReal').value;
-        } else if (role === 'university') {
+        if (role === 'university') {
             data.name = document.getElementById('universityName').value;
             data.country = document.getElementById('country').value;
         }

@@ -1,4 +1,4 @@
-<!-- templates/login.html -->
+<!-- templates/login.html (modified) -->
 {% extends "base.html" %}
 
 {% block title %}Accedi - Credenziali Accademiche{% endblock %}
@@ -11,6 +11,14 @@
                 <h4 class="mb-0">Accedi</h4>
             </div>
             <div class="card-body">
+                <!-- Student login information alert -->
+                <div class="alert alert-info mb-3">
+                    <h5>Credenziali demo per studenti:</h5>
+                    <p><strong>Mario Rossi:</strong> username: mario, password: student1</p>
+                    <p><strong>Laura Bianchi:</strong> username: laura, password: student2</p>
+                    <p><strong>Giovanni Verdi:</strong> username: giovanni, password: student3</p>
+                </div>
+                
                 <form id="loginForm">
                     <div class="mb-3">
                         <label for="username" class="form-label">Nome utente</label>
@@ -24,7 +32,7 @@
                     <button type="submit" class="btn btn-primary w-100">Accedi</button>
                 </form>
                 <div class="mt-3 text-center">
-                    <p>Non hai un account? <a href="/register">Registrati</a></p>
+                    <p>Università o autorità: <a href="/register">Registrati</a></p>
                 </div>
             </div>
         </div>

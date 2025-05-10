@@ -38,16 +38,16 @@ def setup_database():
             create_sample_data()
 
 def create_sample_data():
-    """Crea dati di esempio per il sistema"""
+    """Create sample data for the system with predefined students"""
     from services.auth_service import AuthService
     from services.credential_service import CredentialService
     from models import User, Student, University
     from datetime import datetime, timedelta
     
-    print("Inizializzazione database con dati di esempio...")
+    print("Initializing database with predefined accounts...")
     
     try:
-        # Crea università di esempio
+        # Create university accounts
         unisa, _ = AuthService.register_user(
             username="unisa",
             email="info@unisa.it",
@@ -68,26 +68,35 @@ def create_sample_data():
             did_document_url="https://did.univ-rennes.fr/v1/identifiers/did:web:univ-rennes.fr"
         )
         
-        # Crea studenti di esempio
-        mario, _ = AuthService.register_user(
+        # Create exactly 3 predefined student accounts
+        student1, _ = AuthService.register_user(
             username="mario",
             email="mario@studenti.unisa.it",
-            password="password",
+            password="student1",
             role="student",
             full_name="Mario Rossi",
             id_real="RSSMRA98T10H703S"
         )
         
-        laura, _ = AuthService.register_user(
+        student2, _ = AuthService.register_user(
             username="laura",
             email="laura@studenti.unisa.it",
-            password="password",
+            password="student2",
             role="student",
             full_name="Laura Bianchi",
             id_real="BNCLRA99M49F839X"
         )
         
-        # Crea autorità di esempio
+        student3, _ = AuthService.register_user(
+            username="giovanni",
+            email="giovanni@studenti.unisa.it",
+            password="student3",
+            role="student",
+            full_name="Giovanni Verdi",
+            id_real="VRDGNN00A01F839Y"
+        )
+        
+        # Create authority account
         authority, _ = AuthService.register_user(
             username="erasmus",
             email="admin@erasmus.eu",
@@ -95,13 +104,13 @@ def create_sample_data():
             role="authority"
         )
         
-        # Emetti credenziali di esempio
+        # Issue sample credentials
         today = datetime.utcnow()
         
-        # Credenziali emesse da Rennes per Mario
+        # Credentials for the three students...
         CredentialService.issue_credential(
             rennes.id,
-            mario.id,
+            student1.id,
             {
                 "course_code": "INF/01-ASD",
                 "course_iscee_code": "0613",
@@ -112,8 +121,8 @@ def create_sample_data():
         )
         
         CredentialService.issue_credential(
-            rennes.id,
-            mario.id,
+            unisa.id,
+            student2.id,
             {
                 "course_code": "MAT/03",
                 "course_iscee_code": "0541",
@@ -123,10 +132,9 @@ def create_sample_data():
             }
         )
         
-        # Credenziali emesse da Unisa per Laura
         credential, _ = CredentialService.issue_credential(
             unisa.id,
-            laura.id,
+            student3.id,
             {
                 "course_code": "FIS/01",
                 "course_iscee_code": "0533",
@@ -136,19 +144,11 @@ def create_sample_data():
             }
         )
         
-        # Revoca una credenziale per esempio
-        CredentialService.revoke_credential(
-            credential.uuid,
-            unisa.id,
-            "Errore nelle procedure di valutazione"
-        )
-        
-        print("Dati di esempio creati con successo!")
+        print("Predefined accounts created successfully!")
         
     except Exception as e:
-        print(f"Errore durante la creazione dei dati di esempio: {str(e)}")
+        print(f"Error during sample data creation: {str(e)}")
         db.session.rollback()
-
 
 @app.route('/')
 def index():
