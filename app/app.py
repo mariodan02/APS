@@ -323,7 +323,7 @@ def share_credential():
     session['shared_credential'] = {
         "disclosed_data": disclosed_data,
         "verifier_id": verifier_id,
-        "shared_by": current_user.id,
+        "shared_by": current_user.username,
         "shared_at": datetime.utcnow().isoformat()
     }
     
