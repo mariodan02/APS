@@ -6,16 +6,30 @@ import uuid
 import os
 import json
 import hashlib
+import logging
 
+from tls import TLSManager
+from x509_utils import X509CertificateManager
 from models import db, User, Credential, RevocationRecord, BlockchainBlock, OCSPResponse
 from crypto_utils import generate_keypair, sign_data, verify_signature, hash_data, selective_disclosure
 from blockchain import SimpleBlockchain
-from ocsp_service import ocsp
+from ocsp_service import ocsp, init_ocsp_tls
+
+# Configurazione logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'development-key-change-this-in-production'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///erasmus_credentials.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Configurazione TLS
+app.config['CERT_DIRECTORY'] = os.path.join(os.path.dirname(__file__), 'certificates')
+app.config['USE_TLS'] = True
+app.logger = logging.getLogger('app')
 
 # Inizializzazione delle estensioni
 db.init_app(app)
@@ -28,7 +42,54 @@ app.register_blueprint(ocsp)
 
 @login_manager.user_loader
 def load_user(user_id):
+    """Carica un utente dal database usando l'ID"""
     return User.query.get(int(user_id))
+
+def setup_tls_for_role(role, university_name=None, country=None):
+    """
+    Configura i certificati TLS per il ruolo specificato.
+    
+    Args:
+        role: Ruolo dell'utente ('ca', 'issuer', 'verifier', 'student')
+        university_name: Nome dell'università (per issuer/verifier)
+        country: Paese dell'università (per issuer/verifier)
+        
+    Returns:
+        Istanza di TLSManager configurata per il ruolo
+    """
+    x509_manager = X509CertificateManager()
+    cert_dir = app.config['CERT_DIRECTORY']
+    os.makedirs(cert_dir, exist_ok=True)
+    
+    ca_cert_path = os.path.join(cert_dir, "ca_cert.pem")
+    ca_key_path = os.path.join(cert_dir, "ca_key.pem")
+    
+    # Genera certificato CA se non esiste
+    if not os.path.exists(ca_cert_path) or not os.path.exists(ca_key_path):
+        ca_cert_path, ca_key_path = x509_manager.generate_ca_certificate()
+    
+    # Per i ruoli università (issuer/verifier)
+    if role in ['issuer', 'verifier'] and university_name and country:
+        safe_name = university_name.lower().replace(' ', '_')
+        cert_path = os.path.join(cert_dir, f"{safe_name}_cert.pem")
+        key_path = os.path.join(cert_dir, f"{safe_name}_key.pem")
+        
+        # Genera certificato università se non esiste
+        if not os.path.exists(cert_path) or not os.path.exists(key_path):
+            cert_path, key_path = x509_manager.generate_university_certificate(
+                university_name, country, ca_cert_path, ca_key_path
+            )
+        
+        # Crea e restituisce TLSManager
+        return TLSManager(cert_path, key_path, ca_cert_path)
+    
+    # Per CA
+    elif role == 'ca':
+        return TLSManager(ca_cert_path, ca_key_path, ca_cert_path)
+    
+    # Per studenti (solo lato client)
+    else:
+        return TLSManager(ca_path=ca_cert_path)
 
 def create_sample_data():
     """Crea dati di esempio per l'applicazione"""
@@ -57,7 +118,7 @@ def create_sample_data():
         private_key=rennes_private,
         university_did="did:web:rennes.fr",
         university_name="Université de Rennes",
-        university_country="Francia"
+        university_country="FR"
     )
     db.session.add(rennes)
     
@@ -71,7 +132,7 @@ def create_sample_data():
         private_key=salerno_private,
         university_did="did:web:unisa.it",
         university_name="Università di Salerno",
-        university_country="Italia"
+        university_country="IT"
     )
     db.session.add(salerno)
     
@@ -103,14 +164,26 @@ with app.app_context():
     # Controlla se abbiamo già dei dati di esempio
     if User.query.count() == 0:
         create_sample_data()
+        
+    # Inizializza TLS per la CA
+    ca_tls = setup_tls_for_role('ca')
+    app.config['CA_TLS'] = ca_tls
+    
+    # Inizializza TLS per OCSP
+    ca_cert_path = os.path.join(app.config['CERT_DIRECTORY'], "ca_cert.pem")
+    ca_key_path = os.path.join(app.config['CERT_DIRECTORY'], "ca_key.pem")
+    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
+        init_ocsp_tls(ca_cert_path, ca_key_path)
 
 # Route
 @app.route('/')
 def index():
+    """Pagina principale dell'applicazione"""
     return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """Gestisce il login degli utenti"""
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -137,6 +210,7 @@ def login():
 @app.route('/logout')
 @login_required
 def logout():
+    """Gestisce il logout degli utenti"""
     logout_user()
     return redirect(url_for('index'))
 
@@ -144,6 +218,7 @@ def logout():
 @app.route('/issuer')
 @login_required
 def issuer_dashboard():
+    """Dashboard per le università emittenti"""
     if current_user.role != 'issuer':
         flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
@@ -158,6 +233,7 @@ def issuer_dashboard():
 @app.route('/issuer/issue_credential', methods=['POST'])
 @login_required
 def issue_credential():
+    """Emette una nuova credenziale accademica"""
     if current_user.role != 'issuer':
         return jsonify({"error": "Non autorizzato"}), 403
     
@@ -209,8 +285,30 @@ def issue_credential():
     db.session.add(credential)
     db.session.commit()
     
-    # Aggiungi alla blockchain
+    # Aggiungi alla blockchain usando TLS
     blockchain = SimpleBlockchain()
+    
+    # Configura TLS per l'università emittente se necessario
+    if app.config['USE_TLS']:
+        issuer_tls = setup_tls_for_role(
+            'issuer', 
+            current_user.university_name, 
+            current_user.university_country
+        )
+        
+        # Configura la blockchain per usare TLS
+        blockchain.init_tls(
+            issuer_tls.cert_path, 
+            issuer_tls.key_path, 
+            issuer_tls.ca_path
+        )
+        
+        try:
+            app.logger.info(f"Connessione TLS alla CA per registrare la credenziale {credential.uuid}")
+            # In un'implementazione reale, qui ci sarebbe una connessione effettiva
+        except Exception as e:
+            app.logger.error(f"Errore nella connessione TLS: {e}")
+    
     credential.blockchain_reference = blockchain.add_credential(credential)
     db.session.commit()
     
@@ -223,6 +321,7 @@ def issue_credential():
 @app.route('/issuer/revoke_credential', methods=['POST'])
 @login_required
 def revoke_credential():
+    """Revoca una credenziale precedentemente emessa"""
     if current_user.role != 'issuer':
         return jsonify({"error": "Non autorizzato"}), 403
     
@@ -245,8 +344,32 @@ def revoke_credential():
         revoker_id=current_user.id
     )
     
-    # Aggiungi alla blockchain
+    # Inizializza blockchain con TLS se necessario
     blockchain = SimpleBlockchain()
+    
+    if app.config['USE_TLS']:
+        # Inizializza TLS per l'università emittente
+        issuer_tls = setup_tls_for_role(
+            'issuer', 
+            current_user.university_name, 
+            current_user.university_country
+        )
+        
+        # Configura blockchain per usare TLS
+        blockchain.init_tls(
+            issuer_tls.cert_path, 
+            issuer_tls.key_path, 
+            issuer_tls.ca_path
+        )
+        
+        try:
+            app.logger.info(f"Avvio scenario di revoca TLS per credenziale {credential_uuid}")
+            # In un'implementazione reale, qui si eseguirebbe lo scenario di revoca TLS
+            # issuer_tls.handle_revocation_scenario('ca.edu', 443, credential_uuid, reason)
+        except Exception as e:
+            app.logger.error(f"Errore nello scenario di revoca TLS: {e}")
+    
+    # Esegui la revoca nella blockchain
     revocation.transaction_hash = blockchain.revoke_credential(credential_uuid, reason, current_user.id)
     
     # Aggiorna stato della credenziale
@@ -264,6 +387,7 @@ def revoke_credential():
 @app.route('/student')
 @login_required
 def student_dashboard():
+    """Dashboard per gli studenti"""
     if current_user.role != 'student':
         flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
@@ -278,6 +402,7 @@ def student_dashboard():
 @app.route('/student/view_credential/<uuid>')
 @login_required
 def view_credential(uuid):
+    """Visualizza dettagli di una credenziale"""
     if current_user.role != 'student':
         return jsonify({"error": "Non autorizzato"}), 403
     
@@ -290,6 +415,7 @@ def view_credential(uuid):
 @app.route('/student/share_credential', methods=['POST'])
 @login_required
 def share_credential():
+    """Condivide una credenziale con un verificatore"""
     if current_user.role != 'student':
         return jsonify({"error": "Non autorizzato"}), 403
     
@@ -306,26 +432,47 @@ def share_credential():
     if not credential:
         return jsonify({"error": "Credenziale non trovata"}), 404
     
-    # Controlla se la credenziale è revocata
-    blockchain = SimpleBlockchain()
-    status = blockchain.verify_credential(credential_uuid)
-    if status == "revoked":
-        return jsonify({
-            "error": "Impossibile condividere una credenziale revocata",
-            "status": status
-        }), 400
+    # Configura TLS per lo studente se necessario
+    if app.config['USE_TLS']:
+        student_tls = setup_tls_for_role('student')
+        
+        # Configura blockchain per usare TLS
+        blockchain = SimpleBlockchain()
+        blockchain.init_tls(ca_path=student_tls.ca_path)
+        
+        # Verifica con TLS se la credenziale è revocata
+        status = blockchain.verify_credential(credential_uuid)
+        if status == "revoked":
+            return jsonify({
+                "error": "Impossibile condividere una credenziale revocata",
+                "status": status
+            }), 400
+    else:
+        # Verifica senza TLS
+        blockchain = SimpleBlockchain()
+        status = blockchain.verify_credential(credential_uuid)
+        if status == "revoked":
+            return jsonify({
+                "error": "Impossibile condividere una credenziale revocata",
+                "status": status
+            }), 400
     
     # Crea informazione selettiva
     disclosed_data = selective_disclosure(credential, fields_to_disclose)
     
-    # In un'app reale, questo verrebbe inviato al verificatore
-    # Qui simuliamo con una variabile di sessione
+    # In un'app reale, questo verrebbe inviato al verificatore usando TLS
+    # Per questa simulazione, usiamo una variabile di sessione
     session['shared_credential'] = {
         "disclosed_data": disclosed_data,
         "verifier_id": verifier_id,
         "shared_by": current_user.username,
         "shared_at": datetime.utcnow().isoformat()
     }
+    
+    # Se TLS è attivo, logga che si utilizzerebbe TLS per inviare i dati
+    if app.config['USE_TLS']:
+        verifier = User.query.get(verifier_id)
+        app.logger.info(f"Invio dati via TLS a {verifier.university_name if verifier else 'verificatore sconosciuto'}")
     
     return jsonify({
         "success": True,
@@ -337,6 +484,7 @@ def share_credential():
 @app.route('/verifier')
 @login_required
 def verifier_dashboard():
+    """Dashboard per le università verificatrici"""
     if current_user.role != 'verifier':
         flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
@@ -350,6 +498,7 @@ def verifier_dashboard():
 @app.route('/verifier/verify_credential', methods=['POST'])
 @login_required
 def verify_credential():
+    """Verifica l'autenticità di una credenziale"""
     if current_user.role != 'verifier':
         return jsonify({"error": "Non autorizzato"}), 403
     
@@ -359,15 +508,36 @@ def verify_credential():
     if not credential_uuid:
         return jsonify({"error": "Manca credential_uuid"}), 400
     
-    # Controlla la blockchain per lo stato della credenziale
+    # Inizializza blockchain con TLS se necessario
     blockchain = SimpleBlockchain()
+    
+    if app.config['USE_TLS']:
+        # Inizializza TLS per l'università verificatrice
+        verifier_tls = setup_tls_for_role(
+            'verifier', 
+            current_user.university_name, 
+            current_user.university_country
+        )
+        
+        # Configura blockchain per usare TLS
+        blockchain.init_tls(
+            verifier_tls.cert_path, 
+            verifier_tls.key_path, 
+            verifier_tls.ca_path
+        )
+        
+        # Log dell'uso di TLS
+        app.logger.info(f"Verifica della credenziale {credential_uuid} con TLS")
+    
+    # Controlla la blockchain per lo stato della credenziale
     status = blockchain.verify_credential(credential_uuid)
     
-    # Ottieni risposta OCSP
+    # Prepara richiesta OCSP
     ocsp_response = {
         "credential_uuid": credential_uuid
     }
     
+    # Invia la richiesta OCSP (in un'app reale userebbe TLS)
     response = app.test_client().post(
         '/api/ocsp/check',
         json=ocsp_response,
@@ -390,6 +560,7 @@ def verify_credential():
 @app.route('/ca')
 @login_required
 def ca_dashboard():
+    """Dashboard per l'autorità di certificazione"""
     if current_user.role != 'ca':
         flash('Accesso non autorizzato.')
         return redirect(url_for('index'))
@@ -409,10 +580,23 @@ def ca_dashboard():
 @app.route('/ca/blockchain_status')
 @login_required
 def blockchain_status():
+    """Restituisce lo stato corrente della blockchain"""
     if current_user.role != 'ca':
         return jsonify({"error": "Non autorizzato"}), 403
     
+    # Inizializza blockchain con TLS se necessario
     blockchain = SimpleBlockchain()
+    
+    if app.config['USE_TLS']:
+        # Usa il TLS della CA configurato all'avvio
+        if 'CA_TLS' in app.config:
+            ca_tls = app.config['CA_TLS']
+            blockchain.init_tls(
+                ca_tls.cert_path, 
+                ca_tls.key_path, 
+                ca_tls.ca_path
+            )
+    
     is_valid = blockchain.is_valid()
     
     blocks = BlockchainBlock.query.order_by(BlockchainBlock.id.desc()).all()
