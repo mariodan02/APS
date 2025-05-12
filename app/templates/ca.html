@@ -46,7 +46,7 @@
                                         <td>{{ block.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                                         <td>
                                             {% if block.data %}
-                                            {% set data = block.data|tojson|fromjson %}
+                                            {% set data = block.data|safe %}
                                             {% if data.type == 'credential_issuance' %}
                                             <span class="badge bg-info">Emissione</span>
                                             {% elif data.type == 'credential_revocation' %}

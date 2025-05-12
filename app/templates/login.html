@@ -3,6 +3,33 @@
 <head>
     <title>Login</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+    <style>
+        .login-creds {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+            background-color: #f8f9fa;
+            font-size: 0.9rem;
+        }
+        .login-creds table {
+            width: 100%;
+            margin-bottom: 0;
+        }
+        .login-creds h5 {
+            margin-bottom: 15px;
+            color: #6c757d;
+        }
+        .login-creds td {
+            padding: 5px;
+        }
+        .login-creds .role-badge {
+            font-size: 0.7rem;
+            padding: 3px 6px;
+            margin-left: 5px;
+            vertical-align: middle;
+        }
+    </style>
 </head>
 <body>
     <div class="container mt-5">
@@ -28,8 +55,68 @@
                         </form>
                     </div>
                 </div>
+                
+                <!-- Riquadro Credenziali -->
+                <div class="login-creds">
+                    <h5>Credenziali di Test</h5>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Ruolo</th>
+                                <th>Username</th>
+                                <th>Password</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>CA</td>
+                                <td>ca_admin</td>
+                                <td>ca_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('ca_admin', 'ca_password')">Usa</button></td>
+                            </tr>
+                            <tr>
+                                <td>Università (Emittente)</td>
+                                <td>rennes_admin</td>
+                                <td>rennes_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('rennes_admin', 'rennes_password')">Usa</button></td>
+                            </tr>
+                            <tr>
+                                <td>Università (Verifica)</td>
+                                <td>salerno_admin</td>
+                                <td>salerno_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('salerno_admin', 'salerno_password')">Usa</button></td>
+                            </tr>
+                            <tr>
+                                <td>Studente 1</td>
+                                <td>student1</td>
+                                <td>student1_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('student1', 'student1_password')">Usa</button></td>
+                            </tr>
+                            <tr>
+                                <td>Studente 2</td>
+                                <td>student2</td>
+                                <td>student2_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('student2', 'student2_password')">Usa</button></td>
+                            </tr>
+                            <tr>
+                                <td>Studente 3</td>
+                                <td>student3</td>
+                                <td>student3_password</td>
+                                <td><button class="btn btn-sm btn-outline-secondary" onclick="fillLogin('student3', 'student3_password')">Usa</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
+
+    <script>
+        function fillLogin(username, password) {
+            document.getElementById('username').value = username;
+            document.getElementById('password').value = password;
+        }
+    </script>
 </body>
 </html>
