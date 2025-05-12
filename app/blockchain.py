@@ -34,7 +34,7 @@ class SimpleBlockchain:
         Returns:
             Istanza TLSManager inizializzata
         """
-        from tls_manager import TLSManager
+        from tls import TLSManager
         
         if not self.tls_manager and self.use_tls:
             self.logger.info("Inizializzazione TLS per la blockchain")

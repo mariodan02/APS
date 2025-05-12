@@ -1,10 +1,11 @@
 # file: x509_utils.py
 
 import datetime
+import re
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.backends import default_backend
 import os
 
@@ -90,6 +91,19 @@ class X509CertificateManager:
             
         return cert_path, key_path
         
+    def sanitize_dns_name(self, name):
+        """
+        Sanitizza un nome per uso come DNS eliminando i caratteri non-ASCII.
+        
+        Args:
+            name: Nome da sanitizzare
+            
+        Returns:
+            Nome sanitizzato per uso come DNS
+        """
+        # Rimuove caratteri non-ASCII e sostituisce spazi con niente
+        return re.sub(r'[^\x00-\x7F]', '', name.lower().replace(' ', ''))
+        
     def generate_university_certificate(self, university_name, country, ca_cert_path, ca_key_path):
         """
         Genera un certificato per un'università firmato dalla CA.
@@ -139,6 +153,9 @@ class X509CertificateManager:
             x509.NameAttribute(NameOID.COMMON_NAME, university_name)
         ])
         
+        # Sanitizzazione del nome università per DNS
+        safe_dns_name = self.sanitize_dns_name(university_name) + ".edu"
+        
         # Creazione del certificato
         cert = x509.CertificateBuilder().subject_name(
             subject
@@ -171,13 +188,13 @@ class X509CertificateManager:
             critical=False
         ).add_extension(
             x509.SubjectAlternativeName([
-                x509.DNSName(f"{university_name.lower().replace(' ', '')}.edu")
+                x509.DNSName(safe_dns_name)
             ]),
             critical=False
         ).add_extension(
-            x509.AuthorityInfoAccess([
+            x509.AuthorityInformationAccess([
                 x509.AccessDescription(
-                    x509.oid.AuthorityInfoAccessOID.OCSP,
+                    x509.oid.AuthorityInformationAccessOID.OCSP,
                     x509.UniformResourceIdentifier("https://ocsp.ca.edu/")
                 )
             ]),
