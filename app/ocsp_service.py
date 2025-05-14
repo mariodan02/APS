@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from crypto_utils import sign_data, verify_signature
 import json
 import logging
-from ganache_blockchain import GanacheBlockchain  # Changed from SimpleBlockchain
+from blockchain import SimpleBlockchain
 
 # Configurazione logging
 logging.basicConfig(
@@ -31,7 +31,7 @@ def init_ocsp_tls(ca_cert_path, ca_key_path):
         Istanza TLSManager configurata per OCSP
     """
     global ocsp_tls
-    from tls import TLSManager
+    from tls_manager import TLSManager
     
     logger.info("Inizializzazione TLS per il servizio OCSP")
     ocsp_tls = TLSManager(ca_cert_path, ca_key_path, ca_cert_path)
@@ -71,7 +71,7 @@ def check_credential():
         return create_ocsp_response(credential_uuid, "unknown", None)
     
     # Verifica nella blockchain lo stato della credenziale
-    blockchain = GanacheBlockchain(current_app.config.get('GANACHE_URL', 'http://127.0.0.1:7545'))
+    blockchain = SimpleBlockchain()
     
     # Configura TLS per blockchain se necessario
     if use_tls and ocsp_tls:
