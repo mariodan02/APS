@@ -12,7 +12,7 @@ from tls import TLSManager
 from x509_utils import X509CertificateManager
 from models import db, User, Credential, RevocationRecord, BlockchainBlock, OCSPResponse
 from crypto_utils import generate_keypair, sign_data, verify_signature, hash_data, selective_disclosure
-from blockchain import SimpleBlockchain
+from ganache_blockchain import GanacheBlockchain  # Changed from SimpleBlockchain
 from ocsp_service import ocsp, init_ocsp_tls
 
 # Configurazione logging
@@ -25,6 +25,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'development-key-change-this-in-production'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///erasmus_credentials.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Configurazione blockchain
+app.config['GANACHE_URL'] = 'http://127.0.0.1:7545'  # Default Ganache URL
 
 # Configurazione TLS
 app.config['CERT_DIRECTORY'] = os.path.join(os.path.dirname(__file__), 'certificates')
@@ -156,7 +159,7 @@ def create_sample_data():
     db.session.commit()
     
     # Inizializza blockchain
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
 
 # Inizializza database e crea dati di esempio
 with app.app_context():
@@ -286,7 +289,7 @@ def issue_credential():
     db.session.commit()
     
     # Aggiungi alla blockchain usando TLS
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
     
     # Configura TLS per l'università emittente se necessario
     if app.config['USE_TLS']:
@@ -345,7 +348,7 @@ def revoke_credential():
     )
     
     # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
     
     if app.config['USE_TLS']:
         # Inizializza TLS per l'università emittente
@@ -437,7 +440,7 @@ def share_credential():
         student_tls = setup_tls_for_role('student')
         
         # Configura blockchain per usare TLS
-        blockchain = SimpleBlockchain()
+        blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
         blockchain.init_tls(ca_path=student_tls.ca_path)
         
         # Verifica con TLS se la credenziale è revocata
@@ -449,7 +452,7 @@ def share_credential():
             }), 400
     else:
         # Verifica senza TLS
-        blockchain = SimpleBlockchain()
+        blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
         status = blockchain.verify_credential(credential_uuid)
         if status == "revoked":
             return jsonify({
@@ -509,7 +512,7 @@ def verify_credential():
         return jsonify({"error": "Manca credential_uuid"}), 400
     
     # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
     
     if app.config['USE_TLS']:
         # Inizializza TLS per l'università verificatrice
@@ -566,7 +569,7 @@ def ca_dashboard():
         return redirect(url_for('index'))
     
     # Ottieni stato blockchain
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
     is_valid = blockchain.is_valid()
     
     blocks = BlockchainBlock.query.order_by(BlockchainBlock.id.desc()).limit(10).all()
@@ -585,7 +588,7 @@ def blockchain_status():
         return jsonify({"error": "Non autorizzato"}), 403
     
     # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
+    blockchain = GanacheBlockchain(app.config['GANACHE_URL'])
     
     if app.config['USE_TLS']:
         # Usa il TLS della CA configurato all'avvio
