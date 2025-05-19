@@ -23,10 +23,13 @@ import x509_utils
 class IssuerUniversity:
     """Università che emette credenziali accademiche"""
     
-    def __init__(self, university_id: str, cert_file: str, key_file: str):
+    def __init__(self, university_id: str, cert_file: str, key_file: str, 
+                 eth_private_key: str = None, ganache_url="http://127.0.0.1:7545", 
+                 contract_address=None):
         self.id = university_id
         self.cert_file = cert_file
         self.key_file = key_file
+        self.eth_private_key = eth_private_key  # Chiave privata Ethereum
         
         # Carica il certificato e la chiave
         self.cert_pem = x509_utils.load_certificate(cert_file)
@@ -35,8 +38,14 @@ class IssuerUniversity:
         # Database degli studenti (simulato)
         self.student_records = {}
         
-        # Servizio OCSP per gestire lo stato delle credenziali
-        self.ocsp_service = OCSPService("./instance/erasmus_credentials.db")
+        # Servizio OCSP per gestire lo stato delle credenziali (basato su blockchain)
+        self.ocsp_service = OCSPService(ganache_url, contract_address)
+        
+        # Inizializza il contratto se necessario
+        if eth_private_key and not contract_address:
+            self.contract_address = self.ocsp_service.initialize(eth_private_key)
+        else:
+            self.contract_address = contract_address
     
     def register_student(self, student_id: str, name: str) -> bool:
         """Registra uno studente nel database"""
@@ -110,8 +119,15 @@ class IssuerUniversity:
         signature = sign_data(data_to_sign, self.key_pem)
         credential.signature = signature
         
-        # Registra la credenziale nel servizio OCSP
-        self.ocsp_service.add_credential(credential_id, self.id)
+        # Registra la credenziale sulla blockchain
+        if self.eth_private_key and self.contract_address:
+            self.ocsp_service.add_credential(
+                credential_id, 
+                student_id, 
+                self.id, 
+                merkle_tree["root"], 
+                self.eth_private_key
+            )
         
         # Crea la credenziale completa
         complete_credential = {
@@ -124,8 +140,16 @@ class IssuerUniversity:
     
     def revoke_credential(self, credential_id: str, reason: str) -> bool:
         """Revoca una credenziale precedentemente emessa"""
-        return self.ocsp_service.revoke_credential(credential_id, self.id, reason)
-
+        if not self.eth_private_key or not self.contract_address:
+            return False
+            
+        return self.ocsp_service.revoke_credential(
+            credential_id, 
+            self.id, 
+            reason, 
+            self.eth_private_key
+        )
+    
 class Student:
     """Studente che detiene le credenziali accademiche"""
     
@@ -186,14 +210,15 @@ class Student:
 class VerifierUniversity:
     """Università che verifica le credenziali accademiche"""
     
-    def __init__(self, university_id: str, ca_cert_file: str):
+    def __init__(self, university_id: str, ca_cert_file: str, 
+                 ganache_url="http://127.0.0.1:7545", contract_address=None):
         self.id = university_id
         
         # Carica il certificato CA per verificare i certificati delle altre università
         self.ca_cert_pem = x509_utils.load_certificate(ca_cert_file)
         
-        # Servizio OCSP per verificare lo stato delle credenziali
-        self.ocsp_service = OCSPService("./instance/erasmus_credentials.db")
+        # Servizio OCSP per verificare lo stato delle credenziali (basato su blockchain)
+        self.ocsp_service = OCSPService(ganache_url, contract_address)
     
     def verify_presentation(self, presentation: Dict[str, Any], issuer_cert_file: str) -> Dict[str, Any]:
         """Verifica una presentazione di credenziali"""
@@ -214,12 +239,12 @@ class VerifierUniversity:
             if not verify_signature(data_to_verify, holder_signature, holder_public_key):
                 return {"valid": False, "reason": "La firma dello studente non è valida"}
             
-            # 2. Verifica lo stato della credenziale
+            # 2. Verifica lo stato della credenziale sulla blockchain
             credential_id = presentation["credential_id"]
             credential_status = self.ocsp_service.check_credential_status(credential_id)
             
-            if credential_status["status"] != "valid":
-                return {"valid": False, "reason": f"La credenziale è stata revocata o non è valida: {credential_status['status']}"}
+            if credential_status.get("status") != "valid":
+                return {"valid": False, "reason": f"La credenziale è stata revocata o non è valida: {credential_status.get('status', 'unknown')}"}
             
             # 3. Verifica la firma dell'università emittente
             credential_metadata = presentation["credential_metadata"]
@@ -239,9 +264,11 @@ class VerifierUniversity:
             if current_time > credential_copy["expiry_timestamp"]:
                 return {"valid": False, "reason": "La credenziale è scaduta"}
             
-            # 5. Verifica il Merkle Tree (versione semplificata)
+            # 5. Verifica il Merkle Tree
             merkle_root = presentation["merkle_root"]
-            if merkle_root != credential_copy["merkle_root"]:
+            blockchain_merkle_root = credential_status.get("merkle_root")
+            
+            if merkle_root != credential_copy["merkle_root"] or (blockchain_merkle_root and merkle_root != blockchain_merkle_root):
                 return {"valid": False, "reason": "La root del Merkle Tree non corrisponde alla credenziale"}
             
             # Tutte le verifiche sono passate
@@ -255,12 +282,13 @@ class VerifierUniversity:
             
         except Exception as e:
             return {"valid": False, "reason": f"Errore durante la verifica: {str(e)}"}
-
+        
 def setup_environment():
     """Inizializza l'ambiente di esecuzione"""
     # Crea le directory necessarie
     os.makedirs("./certificates", exist_ok=True)
     os.makedirs("./instance", exist_ok=True)
+    os.makedirs("./contracts", exist_ok=True)
     
     # Verifica se i certificati esistono già
     if not os.path.exists("./certificates/ca_cert.pem"):
@@ -296,43 +324,197 @@ def setup_environment():
             # Salva i certificati
             x509_utils.save_certificate(univ_cert, cert_file)
             x509_utils.save_private_key(univ_key, key_file)
+    
+    # Copia il contratto Solidity
+    if not os.path.exists("./contracts/AcademicCredentials.sol"):
+        print("Creazione del file del contratto Solidity...")
+        # Percorso del contratto Solidity nella directory del codice
+        source_contract = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 
+            "contracts", 
+            "AcademicCredentials.sol"
+        )
+        
+        # Se esiste già nella directory di installazione, copialo
+        if os.path.exists(source_contract):
+            import shutil
+            shutil.copy(source_contract, "./contracts/AcademicCredentials.sol")
+        else:
+            # Altrimenti, crea il file con il contenuto del contratto
+            with open("./contracts/AcademicCredentials.sol", 'w') as f:
+                f.write("""// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract AcademicCredentials {
+    struct Credential {
+        string credentialId;
+        string studentId;
+        string issuerId;
+        string status;
+        string merkleRoot;
+        string reason;
+        uint256 timestamp;
+        uint256 revocationTimestamp;
+    }
+    
+    // Mapping dal credentialId alla Credential
+    mapping(string => Credential) private credentials;
+    
+    // Evento emesso quando viene emessa una nuova credenziale
+    event CredentialIssued(string credentialId, string studentId, string issuerId, uint256 timestamp);
+    
+    // Evento emesso quando una credenziale viene revocata
+    event CredentialRevoked(string credentialId, string issuerId, string reason, uint256 timestamp);
+    
+    // Emette una nuova credenziale
+    function issueCredential(
+        string memory credentialId, 
+        string memory studentId, 
+        string memory issuerId,
+        string memory merkleRoot
+    ) public {
+        require(bytes(credentials[credentialId].credentialId).length == 0, "Credential ID already exists");
+        
+        Credential storage cred = credentials[credentialId];
+        cred.credentialId = credentialId;
+        cred.studentId = studentId;
+        cred.issuerId = issuerId;
+        cred.merkleRoot = merkleRoot;
+        cred.status = "valid";
+        cred.timestamp = block.timestamp;
+        
+        emit CredentialIssued(credentialId, studentId, issuerId, block.timestamp);
+    }
+    
+    // Revoca una credenziale esistente
+    function revokeCredential(string memory credentialId, string memory issuerId, string memory reason) public {
+        Credential storage cred = credentials[credentialId];
+        
+        // Verifica che la credenziale esista e appartenga all'emittente
+        require(bytes(cred.credentialId).length > 0, "Credential does not exist");
+        require(keccak256(bytes(cred.issuerId)) == keccak256(bytes(issuerId)), "Unauthorized issuer");
+        
+        cred.status = "revoked";
+        cred.reason = reason;
+        cred.revocationTimestamp = block.timestamp;
+        
+        emit CredentialRevoked(credentialId, issuerId, reason, block.timestamp);
+    }
+    
+    // Ottiene lo stato di una credenziale
+    function getCredentialStatus(string memory credentialId) public view returns (
+        string memory id,
+        string memory studentId,
+        string memory issuer, 
+        string memory status, 
+        string memory merkleRoot,
+        string memory reason, 
+        uint256 timestamp, 
+        uint256 revocationTimestamp
+    ) {
+        Credential memory cred = credentials[credentialId];
+        
+        return (
+            cred.credentialId,
+            cred.studentId,
+            cred.issuerId,
+            cred.status,
+            cred.merkleRoot,
+            cred.reason,
+            cred.timestamp,
+            cred.revocationTimestamp
+        );
+    }
+}""")
+    
+    # Verifica se il file ABI del contratto esiste
+    if not os.path.exists("./contracts/AcademicCredentials.json"):
+        print("È necessario compilare il contratto Solidity prima di utilizzarlo.")
+        print("Esegui: python compile_contract.py ./contracts/AcademicCredentials.sol ./contracts")
 
 def main():
     """Funzione principale dell'applicazione"""
-    parser = argparse.ArgumentParser(description="Sistema di Credenziali Accademiche")
+    parser = argparse.ArgumentParser(description="Sistema di Credenziali Accademiche con Blockchain Ethereum")
     
     subparsers = parser.add_subparsers(dest="command", help="Comandi disponibili")
     
     # Comando: setup
     setup_parser = subparsers.add_parser("setup", help="Inizializza l'ambiente")
     
+    # Comando: compile
+    compile_parser = subparsers.add_parser("compile", help="Compila il contratto Solidity")
+    compile_parser.add_argument("--solidity-file", default="./contracts/AcademicCredentials.sol", 
+                               help="File Solidity da compilare")
+    compile_parser.add_argument("--output-dir", default="./contracts", 
+                              help="Directory di output per l'ABI e il bytecode")
+    
+    # Comando: deploy
+    deploy_parser = subparsers.add_parser("deploy", help="Distribuisci il contratto sulla blockchain")
+    deploy_parser.add_argument("--private-key", required=True, 
+                             help="Chiave privata Ethereum per la distribuzione")
+    deploy_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                             help="URL di Ganache")
+    deploy_parser.add_argument("--contract-json", default="./contracts/AcademicCredentials.json", 
+                             help="File JSON con ABI e bytecode del contratto")
+    
     # Comando: issue
     issue_parser = subparsers.add_parser("issue", help="Emetti una credenziale")
     issue_parser.add_argument("--university", required=True, help="ID dell'università emittente")
     issue_parser.add_argument("--student", required=True, help="ID dello studente")
     issue_parser.add_argument("--output", required=True, help="File di output per la credenziale")
+    issue_parser.add_argument("--eth-private-key", required=True, 
+                             help="Chiave privata Ethereum dell'università")
+    issue_parser.add_argument("--contract", required=True, 
+                            help="Indirizzo del contratto sulla blockchain")
+    issue_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                            help="URL di Ganache")
     
     # Comando: verify
     verify_parser = subparsers.add_parser("verify", help="Verifica una presentazione")
     verify_parser.add_argument("--university", required=True, help="ID dell'università verificatrice")
     verify_parser.add_argument("--presentation", required=True, help="File della presentazione da verificare")
     verify_parser.add_argument("--issuer", required=True, help="ID dell'università emittente")
+    verify_parser.add_argument("--contract", required=True, 
+                             help="Indirizzo del contratto sulla blockchain")
+    verify_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                             help="URL di Ganache")
     
     # Comando: revoke
     revoke_parser = subparsers.add_parser("revoke", help="Revoca una credenziale")
     revoke_parser.add_argument("--university", required=True, help="ID dell'università emittente")
     revoke_parser.add_argument("--credential", required=True, help="ID della credenziale da revocare")
     revoke_parser.add_argument("--reason", required=True, help="Motivo della revoca")
+    revoke_parser.add_argument("--eth-private-key", required=True, 
+                              help="Chiave privata Ethereum dell'università")
+    revoke_parser.add_argument("--contract", required=True, 
+                             help="Indirizzo del contratto sulla blockchain")
+    revoke_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                             help="URL di Ganache")
     
     # Comando: present
     present_parser = subparsers.add_parser("present", help="Crea una presentazione verificabile")
     present_parser.add_argument("--student", required=True, help="ID dello studente")
     present_parser.add_argument("--credential", required=True, help="File della credenziale")
-    present_parser.add_argument("--attributes", required=True, help="Attributi da divulgare (separati da virgole)")
+    present_parser.add_argument("--attributes", required=True, 
+                              help="Attributi da divulgare (separati da virgole)")
     present_parser.add_argument("--output", required=True, help="File di output per la presentazione")
+    
+    # Comando: check
+    check_parser = subparsers.add_parser("check", help="Verifica lo stato di una credenziale sulla blockchain")
+    check_parser.add_argument("--credential", required=True, help="ID della credenziale da verificare")
+    check_parser.add_argument("--contract", required=True, 
+                            help="Indirizzo del contratto sulla blockchain")
+    check_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                            help="URL di Ganache")
     
     # Comando: demo
     demo_parser = subparsers.add_parser("demo", help="Esegui una dimostrazione completa")
+    demo_parser.add_argument("--eth-private-key", required=True, 
+                           help="Chiave privata Ethereum dell'università")
+    demo_parser.add_argument("--contract", required=True, 
+                          help="Indirizzo del contratto sulla blockchain")
+    demo_parser.add_argument("--ganache-url", default="http://127.0.0.1:7545", 
+                          help="URL di Ganache")
     
     args = parser.parse_args()
     
@@ -341,12 +523,28 @@ def main():
         setup_environment()
         print("Ambiente inizializzato con successo!")
         
+    elif args.command == "compile":
+        # Importa il modulo solo se necessario
+        from compile_contract import compile_contract
+        compile_contract(args.solidity_file, args.output_dir)
+        
+    elif args.command == "deploy":
+        # Importa il modulo solo se necessario
+        from deploy_contract import deploy_contract
+        contract_address = deploy_contract(args.contract_json, args.ganache_url, args.private_key)
+        if contract_address:
+            print(f"Contratto distribuito all'indirizzo: {contract_address}")
+            print(f"Usa questo indirizzo con il parametro --contract negli altri comandi")
+        
     elif args.command == "issue":
         # Carica l'università emittente
         univ = IssuerUniversity(
             args.university,
             f"./certificates/{args.university}_cert.pem",
-            f"./certificates/{args.university}_key.pem"
+            f"./certificates/{args.university}_key.pem",
+            args.eth_private_key,
+            args.ganache_url,
+            args.contract
         )
         
         # Registra lo studente (nella pratica, lo studente sarebbe già registrato)
@@ -372,7 +570,9 @@ def main():
         # Carica l'università verificatrice
         verifier = VerifierUniversity(
             args.university,
-            "./certificates/ca_cert.pem"
+            "./certificates/ca_cert.pem",
+            args.ganache_url,
+            args.contract
         )
         
         # Carica la presentazione
@@ -400,7 +600,10 @@ def main():
         univ = IssuerUniversity(
             args.university,
             f"./certificates/{args.university}_cert.pem",
-            f"./certificates/{args.university}_key.pem"
+            f"./certificates/{args.university}_key.pem",
+            args.eth_private_key,
+            args.ganache_url,
+            args.contract
         )
         
         # Revoca la credenziale
@@ -432,9 +635,20 @@ def main():
             print(f"Presentazione creata con successo con {len(attributes)} attributi divulgati!")
         else:
             print("Errore nella creazione della presentazione")
+    
+    elif args.command == "check":
+        # Crea un'istanza del servizio OCSP
+        ocsp_service = OCSPService(args.ganache_url, args.contract)
+        
+        # Verifica lo stato della credenziale
+        status = ocsp_service.check_credential_status(args.credential)
+        
+        print("Stato della credenziale:")
+        for key, value in status.items():
+            print(f"  {key}: {value}")
             
     elif args.command == "demo":
-        print("Esecuzione della dimostrazione...")
+        print("Esecuzione della dimostrazione con blockchain Ethereum...")
         
         # Inizializza l'ambiente
         setup_environment()
@@ -443,12 +657,17 @@ def main():
         univ_salerno = IssuerUniversity(
             "università_di_salerno",
             "./certificates/università_di_salerno_cert.pem",
-            "./certificates/università_di_salerno_key.pem"
+            "./certificates/università_di_salerno_key.pem",
+            args.eth_private_key,
+            args.ganache_url,
+            args.contract
         )
         
         univ_rennes = VerifierUniversity(
             "université_de_rennes",
-            "./certificates/ca_cert.pem"
+            "./certificates/ca_cert.pem",
+            args.ganache_url,
+            args.contract
         )
         
         # Crea uno studente
@@ -464,7 +683,7 @@ def main():
         univ_salerno.add_academic_record(student.id, "ING104", "Inglese B2", 5, 27)
         univ_salerno.add_academic_record(student.id, "ECO105", "Economia", 6, 26)
         
-        print("\n3. Emissione della credenziale accademica")
+        print("\n3. Emissione della credenziale accademica (registrata su blockchain)")
         credential = univ_salerno.issue_credential(student.id)
         credential_id = credential["credential"]["credential_id"]
         print(f"   Credenziale emessa con ID: {credential_id}")
@@ -476,7 +695,7 @@ def main():
         print("   Lo studente sceglie di condividere solo i voti di Matematica e Fisica")
         presentation = student.create_presentation(credential_id, ["MAT101", "FIS102"])
         
-        print("\n6. Verifica della presentazione da parte dell'Università di Rennes")
+        print("\n6. Verifica della presentazione da parte dell'Università di Rennes (utilizzo della blockchain)")
         result = univ_rennes.verify_presentation(
             presentation,
             "./certificates/università_di_salerno_cert.pem"
@@ -494,7 +713,7 @@ def main():
         else:
             print(f"   Verifica fallita: {result['reason']}")
         
-        print("\n7. Test di revoca")
+        print("\n7. Test di revoca sulla blockchain")
         print("   L'Università di Salerno revoca la credenziale")
         univ_salerno.revoke_credential(credential_id, "Errore amministrativo")
         
@@ -513,6 +732,3 @@ def main():
     
     else:
         parser.print_help()
-
-if __name__ == "__main__":
-    main()

@@ -1,75 +1,100 @@
-# 📚 Overview
-This project implements a decentralized system for selective sharing and revocation of academic credentials in the context of the Erasmus student mobility program. The system addresses critical security, privacy, and interoperability challenges in international academic credential exchange.
+# Guida al Sistema di Credenziali Accademiche con Blockchain Ethereum
 
-# 🚀 Key Features
+Questa guida spiega come utilizzare il sistema di credenziali accademiche modificato per lavorare con una blockchain Ethereum locale tramite Ganache.
 
-- Decentralized Architecture: Eliminates dependency on central authorities for credential verification
-- Privacy-Preserving: Implements selective disclosure to share only necessary information
-- Revocation Support: Dynamic and publicly verifiable credential revocation mechanism
-- Cross-Institutional Interoperability: Seamless credential exchange between different universities
-- Resource-Efficient: Optimized for devices with limited resources (hardware wallets)
+## Prerequisiti
 
-# 🎯 Problem Statement
-Current academic credential exchange systems face significant challenges:
+1. Installare le dipendenze:
+```bash
+pip install -r requirements.txt
+```
 
-- Reliance on central authorities for verification
-- Privacy violations through over-sharing of student information
-- Lack of standardized revocation mechanisms
-- Poor scalability and interoperability across different systems
+2. Ganache in esecuzione su http://127.0.0.1:7545
+   - Scaricare e installare [Ganache](https://trufflesuite.com/ganache/)
+   - Avviare un nuovo workspace Ethereum
 
-This project provides a comprehensive solution using modern cryptographic techniques and decentralized architectures.
+## Passi per l'utilizzo
 
-# 🏗️ System Architecture
-The system consists of four main work packages:
+### 1. Inizializzare l'ambiente
 
-WP1: Threat Modeling & Requirements
+```bash
+python app.py setup
+```
 
-- Definition of honest actors (students, universities, accreditation bodies)
-- Comprehensive threat model analysis
-- Security properties and resilience requirements
-- Credential structure specification
+Questo creerà le directory necessarie e i certificati per le università.
 
-WP2: System Design
+### 2. Compilare il contratto Solidity
 
-- Authentication mechanisms for all participants
-- Academic credential structure with selective disclosure
-- Revocation protocol design
-- Network and memory efficiency optimizations
+```bash
+python app.py compile
+```
 
-WP3: Security Analysis
+Questo compilerà il contratto Solidity e genererà il file ABI.
 
-- Formal security verification
-- Attack vector analysis
-- Privacy guarantees validation
-- Performance-security trade-off evaluation
+### 3. Distribuire il contratto sulla blockchain Ganache
 
-WP4: Implementation & Performance
+```bash
+python app.py deploy --private-key <CHIAVE_PRIVATA_ETH>
+```
 
-- Simulated environment implementation
-- Performance benchmarking (credential size, verification latency)
-- Practical deployment considerations
+Dove `<CHIAVE_PRIVATA_ETH>` è la chiave privata di uno degli account su Ganache. Puoi ottenerla facendo clic su "Show Keys" nell'interfaccia di Ganache.
 
-# 💻 Technical Stack:
-[To be defined]
+Questo comando restituirà l'indirizzo del contratto distribuito, che sarà necessario per i comandi successivi.
 
-# 🎓 Academic Context
-This project was developed as part of the "Algorithms and Protocols for Security" course at the University of Salerno, under the supervision of professors Carlo Mazzocca and Francesco Cauteruccio (Academic Year 2024-2025).
+### 4. Emettere una credenziale
 
-# 🌟 Key Achievements
+```bash
+python app.py issue --university università_di_salerno --student S12345 --output credential.json --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+```
 
-- Designed a novel decentralized credential system with selective disclosure
-- Implemented privacy-preserving protocols for academic credential exchange
-- Developed efficient revocation mechanisms suitable for resource-constrained devices
-- Created a comprehensive threat model for academic credential systems
+Questo emetterà una credenziale per lo studente e la registrerà sulla blockchain.
 
-# 📝 Documentation
-Detailed documentation for each work package can be found in the /docs directory:
+### 5. Creare una presentazione verificabile
 
-- Threat Model
-- System Design
-- Security Analysis
-- Implementation Details
+```bash
+python app.py present --student S12345 --credential credential.json --attributes MAT101,FIS102 --output presentation.json
+```
 
-# 🤝 Contributors
-Cuomo Carmine \
-D'Aniello Mario
+Questo creerà una presentazione verificabile che rivela solo gli attributi selezionati.
+
+### 6. Verificare una presentazione
+
+```bash
+python app.py verify --university université_de_rennes --presentation presentation.json --issuer università_di_salerno --contract <INDIRIZZO_CONTRATTO>
+```
+
+Questo verificherà la presentazione, controllando la firma e lo stato della credenziale sulla blockchain.
+
+### 7. Revocare una credenziale
+
+```bash
+python app.py revoke --university università_di_salerno --credential <ID_CREDENZIALE> --reason "Errore amministrativo" --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+```
+
+Questo revocherà la credenziale sulla blockchain.
+
+### 8. Verificare lo stato di una credenziale
+
+```bash
+python app.py check --credential <ID_CREDENZIALE> --contract <INDIRIZZO_CONTRATTO>
+```
+
+Questo mostrerà lo stato attuale della credenziale sulla blockchain.
+
+### 9. Eseguire una dimostrazione completa
+
+```bash
+python app.py demo --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+```
+
+Questo eseguirà una dimostrazione completa del sistema, emettendo una credenziale, creando una presentazione, verificandola, revocandola e dimostrando che la verifica fallisce dopo la revoca.
+
+## Note importanti
+
+1. **Chiavi private**: Le chiavi private Ethereum non dovrebbero mai essere condivise o hardcoded nel codice. In un ambiente di produzione, si dovrebbero utilizzare soluzioni più sicure come la gestione delle chiavi.
+
+2. **Gas e costi di transazione**: Quando si utilizza una rete Ethereum reale (mainnet o testnet), ogni transazione ha un costo. Su Ganache, questo non è un problema, ma dovrebbe essere considerato in un ambiente di produzione.
+
+3. **Web3 Provider**: Il sistema utilizza HTTP come provider Web3. In un ambiente di produzione, si consiglia di utilizzare provider più sicuri come WebSockets o IPC.
+
+4. **Contratto Smart**: Il contratto Solidity fornito è un esempio semplice. In un ambiente di produzione, si dovrebbero considerare aspetti come l'aggiornabilità, la sicurezza e l'ottimizzazione dei costi del gas.
