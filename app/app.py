@@ -1,621 +1,518 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta
-import uuid
+#!/usr/bin/env python3
+"""
+Applicazione principale per il sistema di credenziali accademiche
+"""
 import os
+import sys
+import time
 import json
+import argparse
 import hashlib
-import logging
+from typing import Dict, List, Any, Optional
 
-from tls import TLSManager
-from x509_utils import X509CertificateManager
-from models import db, User, Credential, RevocationRecord, BlockchainBlock, OCSPResponse
-from crypto_utils import generate_keypair, sign_data, verify_signature, hash_data, selective_disclosure
-from blockchain import SimpleBlockchain
-from ocsp_service import ocsp, init_ocsp_tls
-
-# Configurazione logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Importa i moduli del progetto
+from crypto_utils import (
+    generate_key_pair, hash_data, sign_data, verify_signature,
+    encrypt_data, decrypt_data, generate_fernet_key
 )
+from blockchain import Blockchain
+from models import Credential, VerifiablePresentation, Student, AcademicRecord
+from ocsp_service import OCSPService
+import x509_utils
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'development-key-change-this-in-production'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///erasmus_credentials.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Configurazione TLS
-app.config['CERT_DIRECTORY'] = os.path.join(os.path.dirname(__file__), 'certificates')
-app.config['USE_TLS'] = True
-app.logger = logging.getLogger('app')
-
-# Inizializzazione delle estensioni
-db.init_app(app)
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-# Registrazione dei blueprint
-app.register_blueprint(ocsp)
-
-@login_manager.user_loader
-def load_user(user_id):
-    """Carica un utente dal database usando l'ID"""
-    return User.query.get(int(user_id))
-
-def setup_tls_for_role(role, university_name=None, country=None):
-    """
-    Configura i certificati TLS per il ruolo specificato.
+class IssuerUniversity:
+    """Università che emette credenziali accademiche"""
     
-    Args:
-        role: Ruolo dell'utente ('ca', 'issuer', 'verifier', 'student')
-        university_name: Nome dell'università (per issuer/verifier)
-        country: Paese dell'università (per issuer/verifier)
+    def __init__(self, university_id: str, cert_file: str, key_file: str):
+        self.id = university_id
+        self.cert_file = cert_file
+        self.key_file = key_file
         
-    Returns:
-        Istanza di TLSManager configurata per il ruolo
-    """
-    x509_manager = X509CertificateManager()
-    cert_dir = app.config['CERT_DIRECTORY']
-    os.makedirs(cert_dir, exist_ok=True)
-    
-    ca_cert_path = os.path.join(cert_dir, "ca_cert.pem")
-    ca_key_path = os.path.join(cert_dir, "ca_key.pem")
-    
-    # Genera certificato CA se non esiste
-    if not os.path.exists(ca_cert_path) or not os.path.exists(ca_key_path):
-        ca_cert_path, ca_key_path = x509_manager.generate_ca_certificate()
-    
-    # Per i ruoli università (issuer/verifier)
-    if role in ['issuer', 'verifier'] and university_name and country:
-        safe_name = university_name.lower().replace(' ', '_')
-        cert_path = os.path.join(cert_dir, f"{safe_name}_cert.pem")
-        key_path = os.path.join(cert_dir, f"{safe_name}_key.pem")
+        # Carica il certificato e la chiave
+        self.cert_pem = x509_utils.load_certificate(cert_file)
+        self.key_pem = x509_utils.load_private_key(key_file)
         
-        # Genera certificato università se non esiste
-        if not os.path.exists(cert_path) or not os.path.exists(key_path):
-            cert_path, key_path = x509_manager.generate_university_certificate(
-                university_name, country, ca_cert_path, ca_key_path
-            )
+        # Database degli studenti (simulato)
+        self.student_records = {}
         
-        # Crea e restituisce TLSManager
-        return TLSManager(cert_path, key_path, ca_cert_path)
+        # Servizio OCSP per gestire lo stato delle credenziali
+        self.ocsp_service = OCSPService("./instance/erasmus_credentials.db")
     
-    # Per CA
-    elif role == 'ca':
-        return TLSManager(ca_cert_path, ca_key_path, ca_cert_path)
-    
-    # Per studenti (solo lato client)
-    else:
-        return TLSManager(ca_path=ca_cert_path)
-
-def create_sample_data():
-    """Crea dati di esempio per l'applicazione"""
-    
-    # Crea utente CA
-    ca_private, ca_public = generate_keypair()
-    ca = User(
-        username="ca_admin",
-        password=generate_password_hash("ca_password"),
-        role="ca",
-        public_key=ca_public,
-        private_key=ca_private,
-        university_did="did:web:ca.edu",
-        university_name="Autorità di Certificazione",
-        university_country="UE"
-    )
-    db.session.add(ca)
-    
-    # Crea università emittente (Rennes)
-    rennes_private, rennes_public = generate_keypair()
-    rennes = User(
-        username="rennes_admin",
-        password=generate_password_hash("rennes_password"),
-        role="issuer",
-        public_key=rennes_public,
-        private_key=rennes_private,
-        university_did="did:web:rennes.fr",
-        university_name="Université de Rennes",
-        university_country="FR"
-    )
-    db.session.add(rennes)
-    
-    # Crea università verificatrice (Salerno)
-    salerno_private, salerno_public = generate_keypair()
-    salerno = User(
-        username="salerno_admin",
-        password=generate_password_hash("salerno_password"),
-        role="verifier",
-        public_key=salerno_public,
-        private_key=salerno_private,
-        university_did="did:web:unisa.it",
-        university_name="Università di Salerno",
-        university_country="IT"
-    )
-    db.session.add(salerno)
-    
-    # Crea 3 studenti di esempio
-    for i in range(1, 4):
-        student_private, student_public = generate_keypair()
-        student_real_id = f"S{i}12345"
-        student_hash_id = hashlib.md5(student_real_id.encode()).hexdigest()
-        
-        student = User(
-            username=f"student{i}",
-            password=generate_password_hash(f"student{i}_password"),
-            role="student",
-            public_key=student_public,
-            private_key=student_private,
-            student_pseudonym=f"student_{hashlib.md5(f'student{i}'.encode()).hexdigest()[:8]}",
-            student_hash_id=student_hash_id
-        )
-        db.session.add(student)
-    
-    db.session.commit()
-    
-    # Inizializza blockchain
-    blockchain = SimpleBlockchain()
-
-# Inizializza database e crea dati di esempio
-with app.app_context():
-    db.create_all()
-    # Controlla se abbiamo già dei dati di esempio
-    if User.query.count() == 0:
-        create_sample_data()
-        
-    # Inizializza TLS per la CA
-    ca_tls = setup_tls_for_role('ca')
-    app.config['CA_TLS'] = ca_tls
-    
-    # Inizializza TLS per OCSP
-    ca_cert_path = os.path.join(app.config['CERT_DIRECTORY'], "ca_cert.pem")
-    ca_key_path = os.path.join(app.config['CERT_DIRECTORY'], "ca_key.pem")
-    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
-        init_ocsp_tls(ca_cert_path, ca_key_path)
-
-# Route
-@app.route('/')
-def index():
-    """Pagina principale dell'applicazione"""
-    return render_template('index.html')
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    """Gestisce il login degli utenti"""
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        user = User.query.filter_by(username=username).first()
-        
-        if user and check_password_hash(user.password, password):
-            login_user(user)
+    def register_student(self, student_id: str, name: str) -> bool:
+        """Registra uno studente nel database"""
+        if student_id in self.student_records:
+            return False
             
-            # Reindirizza in base al ruolo
-            if user.role == 'issuer':
-                return redirect(url_for('issuer_dashboard'))
-            elif user.role == 'student':
-                return redirect(url_for('student_dashboard'))
-            elif user.role == 'verifier':
-                return redirect(url_for('verifier_dashboard'))
-            elif user.role == 'ca':
-                return redirect(url_for('ca_dashboard'))
-        else:
-            flash('Nome utente o password non validi.')
+        self.student_records[student_id] = {
+            "id": student_id,
+            "name": name,
+            "university_id": self.id,
+            "registration_date": int(time.time()),
+            "academic_records": {}
+        }
+        return True
     
-    return render_template('login.html')
-
-@app.route('/logout')
-@login_required
-def logout():
-    """Gestisce il logout degli utenti"""
-    logout_user()
-    return redirect(url_for('index'))
-
-# Route Università Emittente
-@app.route('/issuer')
-@login_required
-def issuer_dashboard():
-    """Dashboard per le università emittenti"""
-    if current_user.role != 'issuer':
-        flash('Accesso non autorizzato.')
-        return redirect(url_for('index'))
+    def add_academic_record(self, student_id: str, course_id: str, course_name: str, 
+                           credits: int, grade: int) -> bool:
+        """Aggiunge un record accademico (esame) a uno studente"""
+        if student_id not in self.student_records:
+            return False
+            
+        self.student_records[student_id]["academic_records"][course_id] = {
+            "course_id": course_id,
+            "course_name": course_name,
+            "credits": credits,
+            "grade": grade,
+            "date": int(time.time())
+        }
+        return True
     
-    students = User.query.filter_by(role='student').all()
-    credentials = Credential.query.filter_by(issuer_id=current_user.id).all()
+    def _create_merkle_tree(self, records: Dict[str, Any]) -> Dict[str, str]:
+        """Crea un Merkle Tree dai dati degli esami"""
+        leaves = {}
+        
+        # Crea nodi foglia (hash di ogni record)
+        for course_id, record in records.items():
+            record_data = f"{course_id}|{json.dumps(record, sort_keys=True)}"
+            leaves[course_id] = hash_data(record_data)
+        
+        # Calcola la root (per semplicità, hash di tutti gli hash delle foglie)
+        combined = "|".join(sorted([leaves[k] for k in leaves]))
+        root = hash_data(combined)
+        
+        return {"root": root, "leaves": leaves}
     
-    return render_template('issuer.html', 
-                          students=students, 
-                          credentials=credentials)
-
-@app.route('/issuer/issue_credential', methods=['POST'])
-@login_required
-def issue_credential():
-    """Emette una nuova credenziale accademica"""
-    if current_user.role != 'issuer':
-        return jsonify({"error": "Non autorizzato"}), 403
-    
-    data = request.json
-    student_id = data.get('student_id')
-    course_code = data.get('course_code')
-    course_isced = data.get('course_isced')
-    exam_grade = data.get('exam_grade')
-    exam_date_str = data.get('exam_date')
-    ects_credits = data.get('ects_credits')
-    
-    # Validazione
-    if not all([student_id, course_code, exam_grade, exam_date_str, ects_credits]):
-        return jsonify({"error": "Campi obbligatori mancanti"}), 400
-    
-    # Analizza data dell'esame
-    try:
-        exam_date = datetime.strptime(exam_date_str, '%Y-%m-%d')
-    except ValueError:
-        return jsonify({"error": "Formato data non valido"}), 400
-    
-    # Crea credenziale
-    credential = Credential(
-        issuer_id=current_user.id,
-        student_id=student_id,
-        course_code=course_code,
-        course_isced_code=course_isced or "0613",  # Codice ISCED predefinito per Informatica
-        exam_grade=exam_grade,
-        exam_passed=True if int(exam_grade.split('/')[0]) >= 18 else False,  # Passa se voto >= 18/30
-        exam_date=exam_date,
-        ects_credits=int(ects_credits),
-        expiration_date=datetime.utcnow() + timedelta(days=365*5),  # Valido per 5 anni
-        revocation_id=str(uuid.uuid4())
-    )
-    
-    # Firma la credenziale
-    credential_dict = {
-        "uuid": credential.uuid,
-        "issuer_id": credential.issuer_id,
-        "student_id": credential.student_id,
-        "course_code": credential.course_code,
-        "exam_grade": credential.exam_grade,
-        "exam_date": credential.exam_date.isoformat(),
-        "ects_credits": credential.ects_credits
-    }
-    credential.signature = sign_data(current_user.private_key, credential_dict)
-    
-    # Salva nel database
-    db.session.add(credential)
-    db.session.commit()
-    
-    # Aggiungi alla blockchain usando TLS
-    blockchain = SimpleBlockchain()
-    
-    # Configura TLS per l'università emittente se necessario
-    if app.config['USE_TLS']:
-        issuer_tls = setup_tls_for_role(
-            'issuer', 
-            current_user.university_name, 
-            current_user.university_country
+    def issue_credential(self, student_id: str) -> Optional[Dict[str, Any]]:
+        """Emette una credenziale accademica per uno studente"""
+        if student_id not in self.student_records:
+            return None
+            
+        student_data = self.student_records[student_id]
+        
+        # Crea il Merkle Tree dai dati accademici
+        merkle_tree = self._create_merkle_tree(student_data["academic_records"])
+        
+        # Crea un ID univoco per la credenziale
+        credential_id = hash_data(f"{self.id}:{student_id}:{time.time()}")
+        
+        # Crea l'oggetto credenziale
+        credential = Credential(
+            credential_id=credential_id,
+            student_id=student_id,
+            student_name=student_data["name"],
+            issuer_id=self.id,
+            issuer_certificate_id=self.id,  # Semplificato: usa ID università come ID certificato
+            merkle_root=merkle_tree["root"]
         )
         
-        # Configura la blockchain per usare TLS
-        blockchain.init_tls(
-            issuer_tls.cert_path, 
-            issuer_tls.key_path, 
-            issuer_tls.ca_path
+        # Firma la credenziale con la chiave privata dell'università
+        data_to_sign = credential.to_json()
+        signature = sign_data(data_to_sign, self.key_pem)
+        credential.signature = signature
+        
+        # Registra la credenziale nel servizio OCSP
+        self.ocsp_service.add_credential(credential_id, self.id)
+        
+        # Crea la credenziale completa
+        complete_credential = {
+            "credential": credential.to_dict(),
+            "merkle_tree": merkle_tree,
+            "academic_records": student_data["academic_records"]
+        }
+        
+        return complete_credential
+    
+    def revoke_credential(self, credential_id: str, reason: str) -> bool:
+        """Revoca una credenziale precedentemente emessa"""
+        return self.ocsp_service.revoke_credential(credential_id, self.id, reason)
+
+class Student:
+    """Studente che detiene le credenziali accademiche"""
+    
+    def __init__(self, student_id: str, name: str):
+        self.id = student_id
+        self.name = name
+        
+        # Genera una coppia di chiavi per lo studente
+        self.private_key_pem, self.public_key_pem = generate_key_pair()
+        
+        # Wallet delle credenziali
+        self.wallet = {}
+    
+    def receive_credential(self, credential: Dict[str, Any]):
+        """Riceve e archivia una credenziale"""
+        credential_id = credential["credential"]["credential_id"]
+        self.wallet[credential_id] = credential
+        return credential_id
+    
+    def create_presentation(self, credential_id: str, attributes: List[str]) -> Optional[Dict[str, Any]]:
+        """Crea una presentazione verificabile con attributi selettivi"""
+        if credential_id not in self.wallet:
+            return None
+            
+        credential = self.wallet[credential_id]
+        merkle_tree = credential["merkle_tree"]
+        academic_records = credential["academic_records"]
+        
+        # Filtra solo gli attributi richiesti
+        disclosed_attributes = {}
+        for attr in attributes:
+            if attr in academic_records:
+                disclosed_attributes[attr] = academic_records[attr]
+        
+        # Crea la presentazione
+        presentation = VerifiablePresentation(
+            holder_id=self.id,
+            holder_name=self.name,
+            credential_id=credential_id,
+            credential_metadata=credential["credential"],
+            disclosed_attributes=disclosed_attributes,
+            merkle_proofs={attr: merkle_tree["leaves"][attr] for attr in attributes if attr in merkle_tree["leaves"]},
+            merkle_root=merkle_tree["root"]
         )
         
+        # Firma la presentazione
+        data_to_sign = json.dumps(presentation.get_data_for_signing(), sort_keys=True)
+        signature = sign_data(data_to_sign, self.private_key_pem)
+        presentation.holder_signature = signature
+        presentation.holder_public_key = self.public_key_pem.decode()
+        
+        return presentation.to_dict()
+    
+    def check_credential_status(self, credential_id: str, ocsp_service: OCSPService) -> Dict[str, Any]:
+        """Verifica lo stato di una credenziale"""
+        return ocsp_service.check_credential_status(credential_id)
+
+class VerifierUniversity:
+    """Università che verifica le credenziali accademiche"""
+    
+    def __init__(self, university_id: str, ca_cert_file: str):
+        self.id = university_id
+        
+        # Carica il certificato CA per verificare i certificati delle altre università
+        self.ca_cert_pem = x509_utils.load_certificate(ca_cert_file)
+        
+        # Servizio OCSP per verificare lo stato delle credenziali
+        self.ocsp_service = OCSPService("./instance/erasmus_credentials.db")
+    
+    def verify_presentation(self, presentation: Dict[str, Any], issuer_cert_file: str) -> Dict[str, Any]:
+        """Verifica una presentazione di credenziali"""
         try:
-            app.logger.info(f"Connessione TLS alla CA per registrare la credenziale {credential.uuid}")
-            # In un'implementazione reale, qui ci sarebbe una connessione effettiva
+            # Carica il certificato dell'università emittente
+            issuer_cert_pem = x509_utils.load_certificate(issuer_cert_file)
+            
+            # 1. Verifica la firma dello studente
+            holder_public_key = presentation["holder_public_key"].encode()
+            
+            # Prepara i dati firmati (escludendo la firma stessa e la chiave pubblica)
+            presentation_copy = presentation.copy()
+            holder_signature = presentation_copy.pop("holder_signature")
+            presentation_copy.pop("holder_public_key")
+            
+            data_to_verify = json.dumps(presentation_copy, sort_keys=True)
+            
+            if not verify_signature(data_to_verify, holder_signature, holder_public_key):
+                return {"valid": False, "reason": "La firma dello studente non è valida"}
+            
+            # 2. Verifica lo stato della credenziale
+            credential_id = presentation["credential_id"]
+            credential_status = self.ocsp_service.check_credential_status(credential_id)
+            
+            if credential_status["status"] != "valid":
+                return {"valid": False, "reason": f"La credenziale è stata revocata o non è valida: {credential_status['status']}"}
+            
+            # 3. Verifica la firma dell'università emittente
+            credential_metadata = presentation["credential_metadata"]
+            issuer_public_key = x509_utils.extract_public_key(issuer_cert_pem)
+            
+            # Prepara i dati firmati
+            credential_copy = credential_metadata.copy()
+            issuer_signature = credential_copy.pop("signature")
+            
+            data_to_verify = json.dumps(credential_copy, sort_keys=True)
+            
+            if not verify_signature(data_to_verify, issuer_signature, issuer_public_key):
+                return {"valid": False, "reason": "La firma dell'università emittente non è valida"}
+            
+            # 4. Verifica la validità temporale
+            current_time = int(time.time())
+            if current_time > credential_copy["expiry_timestamp"]:
+                return {"valid": False, "reason": "La credenziale è scaduta"}
+            
+            # 5. Verifica il Merkle Tree (versione semplificata)
+            merkle_root = presentation["merkle_root"]
+            if merkle_root != credential_copy["merkle_root"]:
+                return {"valid": False, "reason": "La root del Merkle Tree non corrisponde alla credenziale"}
+            
+            # Tutte le verifiche sono passate
+            return {
+                "valid": True, 
+                "holder_id": presentation["holder_id"],
+                "holder_name": presentation["holder_name"],
+                "issuer_id": credential_metadata["issuer_id"],
+                "disclosed_attributes": presentation["disclosed_attributes"]
+            }
+            
         except Exception as e:
-            app.logger.error(f"Errore nella connessione TLS: {e}")
-    
-    credential.blockchain_reference = blockchain.add_credential(credential)
-    db.session.commit()
-    
-    return jsonify({
-        "success": True,
-        "credential_uuid": credential.uuid,
-        "message": "Credenziale emessa con successo"
-    })
+            return {"valid": False, "reason": f"Errore durante la verifica: {str(e)}"}
 
-@app.route('/issuer/revoke_credential', methods=['POST'])
-@login_required
-def revoke_credential():
-    """Revoca una credenziale precedentemente emessa"""
-    if current_user.role != 'issuer':
-        return jsonify({"error": "Non autorizzato"}), 403
+def setup_environment():
+    """Inizializza l'ambiente di esecuzione"""
+    # Crea le directory necessarie
+    os.makedirs("./certificates", exist_ok=True)
+    os.makedirs("./instance", exist_ok=True)
     
-    data = request.json
-    credential_uuid = data.get('credential_uuid')
-    reason = data.get('reason')
-    
-    if not credential_uuid or not reason:
-        return jsonify({"error": "Campi obbligatori mancanti"}), 400
-    
-    # Ottieni credenziale
-    credential = Credential.query.filter_by(uuid=credential_uuid, issuer_id=current_user.id).first()
-    if not credential:
-        return jsonify({"error": "Credenziale non trovata"}), 404
-    
-    # Crea record di revoca
-    revocation = RevocationRecord(
-        credential_uuid=credential_uuid,
-        reason=reason,
-        revoker_id=current_user.id
-    )
-    
-    # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
-    
-    if app.config['USE_TLS']:
-        # Inizializza TLS per l'università emittente
-        issuer_tls = setup_tls_for_role(
-            'issuer', 
-            current_user.university_name, 
-            current_user.university_country
-        )
+    # Verifica se i certificati esistono già
+    if not os.path.exists("./certificates/ca_cert.pem"):
+        print("Generazione dei certificati per la CA...")
+        ca_cert, ca_key = x509_utils.generate_ca_certificate()
         
-        # Configura blockchain per usare TLS
-        blockchain.init_tls(
-            issuer_tls.cert_path, 
-            issuer_tls.key_path, 
-            issuer_tls.ca_path
-        )
+        # Salva i certificati
+        x509_utils.save_certificate(ca_cert, "./certificates/ca_cert.pem")
+        x509_utils.save_private_key(ca_key, "./certificates/ca_key.pem")
+    
+    # Genera certificati per le università se non esistono
+    universities = [
+        {"id": "università_di_salerno", "name": "Università di Salerno"},
+        {"id": "université_de_rennes", "name": "Université de Rennes"}
+    ]
+    
+    for univ in universities:
+        cert_file = f"./certificates/{univ['id']}_cert.pem"
+        key_file = f"./certificates/{univ['id']}_key.pem"
         
-        try:
-            app.logger.info(f"Avvio scenario di revoca TLS per credenziale {credential_uuid}")
-            # In un'implementazione reale, qui si eseguirebbe lo scenario di revoca TLS
-            # issuer_tls.handle_revocation_scenario('ca.edu', 443, credential_uuid, reason)
-        except Exception as e:
-            app.logger.error(f"Errore nello scenario di revoca TLS: {e}")
-    
-    # Esegui la revoca nella blockchain
-    revocation.transaction_hash = blockchain.revoke_credential(credential_uuid, reason, current_user.id)
-    
-    # Aggiorna stato della credenziale
-    credential.status = "revoked"
-    
-    db.session.add(revocation)
-    db.session.commit()
-    
-    return jsonify({
-        "success": True,
-        "message": "Credenziale revocata con successo"
-    })
-
-# Route Studente
-@app.route('/student')
-@login_required
-def student_dashboard():
-    """Dashboard per gli studenti"""
-    if current_user.role != 'student':
-        flash('Accesso non autorizzato.')
-        return redirect(url_for('index'))
-    
-    credentials = Credential.query.filter_by(student_id=current_user.id).all()
-    verifiers = User.query.filter_by(role='verifier').all()
-    
-    return render_template('student.html', 
-                          credentials=credentials,
-                          verifiers=verifiers)
-
-@app.route('/student/view_credential/<uuid>')
-@login_required
-def view_credential(uuid):
-    """Visualizza dettagli di una credenziale"""
-    if current_user.role != 'student':
-        return jsonify({"error": "Non autorizzato"}), 403
-    
-    credential = Credential.query.filter_by(uuid=uuid, student_id=current_user.id).first()
-    if not credential:
-        return jsonify({"error": "Credenziale non trovata"}), 404
-    
-    return jsonify(credential.to_dict())
-
-@app.route('/student/share_credential', methods=['POST'])
-@login_required
-def share_credential():
-    """Condivide una credenziale con un verificatore"""
-    if current_user.role != 'student':
-        return jsonify({"error": "Non autorizzato"}), 403
-    
-    data = request.json
-    credential_uuid = data.get('credential_uuid')
-    verifier_id = data.get('verifier_id')
-    fields_to_disclose = data.get('fields_to_disclose', [])
-    
-    if not credential_uuid or not verifier_id:
-        return jsonify({"error": "Campi obbligatori mancanti"}), 400
-    
-    # Ottieni credenziale
-    credential = Credential.query.filter_by(uuid=credential_uuid, student_id=current_user.id).first()
-    if not credential:
-        return jsonify({"error": "Credenziale non trovata"}), 404
-    
-    # Configura TLS per lo studente se necessario
-    if app.config['USE_TLS']:
-        student_tls = setup_tls_for_role('student')
-        
-        # Configura blockchain per usare TLS
-        blockchain = SimpleBlockchain()
-        blockchain.init_tls(ca_path=student_tls.ca_path)
-        
-        # Verifica con TLS se la credenziale è revocata
-        status = blockchain.verify_credential(credential_uuid)
-        if status == "revoked":
-            return jsonify({
-                "error": "Impossibile condividere una credenziale revocata",
-                "status": status
-            }), 400
-    else:
-        # Verifica senza TLS
-        blockchain = SimpleBlockchain()
-        status = blockchain.verify_credential(credential_uuid)
-        if status == "revoked":
-            return jsonify({
-                "error": "Impossibile condividere una credenziale revocata",
-                "status": status
-            }), 400
-    
-    # Crea informazione selettiva
-    disclosed_data = selective_disclosure(credential, fields_to_disclose)
-    
-    # In un'app reale, questo verrebbe inviato al verificatore usando TLS
-    # Per questa simulazione, usiamo una variabile di sessione
-    session['shared_credential'] = {
-        "disclosed_data": disclosed_data,
-        "verifier_id": verifier_id,
-        "shared_by": current_user.username,
-        "shared_at": datetime.utcnow().isoformat()
-    }
-    
-    # Se TLS è attivo, logga che si utilizzerebbe TLS per inviare i dati
-    if app.config['USE_TLS']:
-        verifier = User.query.get(verifier_id)
-        app.logger.info(f"Invio dati via TLS a {verifier.university_name if verifier else 'verificatore sconosciuto'}")
-    
-    return jsonify({
-        "success": True,
-        "message": "Credenziale condivisa con successo",
-        "disclosed_data": disclosed_data
-    })
-
-# Route Università Verificatrice
-@app.route('/verifier')
-@login_required
-def verifier_dashboard():
-    """Dashboard per le università verificatrici"""
-    if current_user.role != 'verifier':
-        flash('Accesso non autorizzato.')
-        return redirect(url_for('index'))
-    
-    # Ottieni credenziale condivisa dalla sessione (questa è una simulazione)
-    shared_credential = session.get('shared_credential')
-    
-    return render_template('verifier.html', 
-                          shared_credential=shared_credential)
-
-@app.route('/verifier/verify_credential', methods=['POST'])
-@login_required
-def verify_credential():
-    """Verifica l'autenticità di una credenziale"""
-    if current_user.role != 'verifier':
-        return jsonify({"error": "Non autorizzato"}), 403
-    
-    data = request.json
-    credential_uuid = data.get('credential_uuid')
-    
-    if not credential_uuid:
-        return jsonify({"error": "Manca credential_uuid"}), 400
-    
-    # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
-    
-    if app.config['USE_TLS']:
-        # Inizializza TLS per l'università verificatrice
-        verifier_tls = setup_tls_for_role(
-            'verifier', 
-            current_user.university_name, 
-            current_user.university_country
-        )
-        
-        # Configura blockchain per usare TLS
-        blockchain.init_tls(
-            verifier_tls.cert_path, 
-            verifier_tls.key_path, 
-            verifier_tls.ca_path
-        )
-        
-        # Log dell'uso di TLS
-        app.logger.info(f"Verifica della credenziale {credential_uuid} con TLS")
-    
-    # Controlla la blockchain per lo stato della credenziale
-    status = blockchain.verify_credential(credential_uuid)
-    
-    # Prepara richiesta OCSP
-    ocsp_response = {
-        "credential_uuid": credential_uuid
-    }
-    
-    # Invia la richiesta OCSP (in un'app reale userebbe TLS)
-    response = app.test_client().post(
-        '/api/ocsp/check',
-        json=ocsp_response,
-        content_type='application/json'
-    )
-    
-    ocsp_result = json.loads(response.data)
-    
-    # Combina i risultati
-    result = {
-        "blockchain_status": status,
-        "ocsp_status": ocsp_result['responses'][0]['certStatus'],
-        "verified_at": datetime.utcnow().isoformat() + "Z",
-        "valid": status == "good" and ocsp_result['responses'][0]['certStatus'] == "good"
-    }
-    
-    return jsonify(result)
-
-# Route Autorità di Certificazione
-@app.route('/ca')
-@login_required
-def ca_dashboard():
-    """Dashboard per l'autorità di certificazione"""
-    if current_user.role != 'ca':
-        flash('Accesso non autorizzato.')
-        return redirect(url_for('index'))
-    
-    # Ottieni stato blockchain
-    blockchain = SimpleBlockchain()
-    is_valid = blockchain.is_valid()
-    
-    blocks = BlockchainBlock.query.order_by(BlockchainBlock.id.desc()).limit(10).all()
-    revocations = RevocationRecord.query.order_by(RevocationRecord.revocation_timestamp.desc()).all()
-    
-    return render_template('ca.html', 
-                          blockchain_valid=is_valid,
-                          blocks=blocks,
-                          revocations=revocations)
-
-@app.route('/ca/blockchain_status')
-@login_required
-def blockchain_status():
-    """Restituisce lo stato corrente della blockchain"""
-    if current_user.role != 'ca':
-        return jsonify({"error": "Non autorizzato"}), 403
-    
-    # Inizializza blockchain con TLS se necessario
-    blockchain = SimpleBlockchain()
-    
-    if app.config['USE_TLS']:
-        # Usa il TLS della CA configurato all'avvio
-        if 'CA_TLS' in app.config:
-            ca_tls = app.config['CA_TLS']
-            blockchain.init_tls(
-                ca_tls.cert_path, 
-                ca_tls.key_path, 
-                ca_tls.ca_path
+        if not os.path.exists(cert_file):
+            print(f"Generazione dei certificati per {univ['name']}...")
+            
+            # Carica la CA
+            ca_cert = x509_utils.load_certificate("./certificates/ca_cert.pem")
+            ca_key = x509_utils.load_private_key("./certificates/ca_key.pem")
+            
+            # Genera il certificato
+            univ_cert, univ_key = x509_utils.generate_university_certificate(
+                ca_cert, ca_key, univ['name']
             )
-    
-    is_valid = blockchain.is_valid()
-    
-    blocks = BlockchainBlock.query.order_by(BlockchainBlock.id.desc()).all()
-    block_data = []
-    
-    for block in blocks:
-        block_data.append({
-            "id": block.id,
-            "hash": block.hash,
-            "previous_hash": block.previous_hash,
-            "timestamp": block.timestamp.isoformat(),
-            "data": json.loads(block.data) if block.data else None,
-            "nonce": block.nonce
-        })
-    
-    return jsonify({
-        "blockchain_valid": is_valid,
-        "blocks": block_data
-    })
+            
+            # Salva i certificati
+            x509_utils.save_certificate(univ_cert, cert_file)
+            x509_utils.save_private_key(univ_key, key_file)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+def main():
+    """Funzione principale dell'applicazione"""
+    parser = argparse.ArgumentParser(description="Sistema di Credenziali Accademiche")
+    
+    subparsers = parser.add_subparsers(dest="command", help="Comandi disponibili")
+    
+    # Comando: setup
+    setup_parser = subparsers.add_parser("setup", help="Inizializza l'ambiente")
+    
+    # Comando: issue
+    issue_parser = subparsers.add_parser("issue", help="Emetti una credenziale")
+    issue_parser.add_argument("--university", required=True, help="ID dell'università emittente")
+    issue_parser.add_argument("--student", required=True, help="ID dello studente")
+    issue_parser.add_argument("--output", required=True, help="File di output per la credenziale")
+    
+    # Comando: verify
+    verify_parser = subparsers.add_parser("verify", help="Verifica una presentazione")
+    verify_parser.add_argument("--university", required=True, help="ID dell'università verificatrice")
+    verify_parser.add_argument("--presentation", required=True, help="File della presentazione da verificare")
+    verify_parser.add_argument("--issuer", required=True, help="ID dell'università emittente")
+    
+    # Comando: revoke
+    revoke_parser = subparsers.add_parser("revoke", help="Revoca una credenziale")
+    revoke_parser.add_argument("--university", required=True, help="ID dell'università emittente")
+    revoke_parser.add_argument("--credential", required=True, help="ID della credenziale da revocare")
+    revoke_parser.add_argument("--reason", required=True, help="Motivo della revoca")
+    
+    # Comando: present
+    present_parser = subparsers.add_parser("present", help="Crea una presentazione verificabile")
+    present_parser.add_argument("--student", required=True, help="ID dello studente")
+    present_parser.add_argument("--credential", required=True, help="File della credenziale")
+    present_parser.add_argument("--attributes", required=True, help="Attributi da divulgare (separati da virgole)")
+    present_parser.add_argument("--output", required=True, help="File di output per la presentazione")
+    
+    # Comando: demo
+    demo_parser = subparsers.add_parser("demo", help="Esegui una dimostrazione completa")
+    
+    args = parser.parse_args()
+    
+    # Esegui il comando specificato
+    if args.command == "setup":
+        setup_environment()
+        print("Ambiente inizializzato con successo!")
+        
+    elif args.command == "issue":
+        # Carica l'università emittente
+        univ = IssuerUniversity(
+            args.university,
+            f"./certificates/{args.university}_cert.pem",
+            f"./certificates/{args.university}_key.pem"
+        )
+        
+        # Registra lo studente (nella pratica, lo studente sarebbe già registrato)
+        univ.register_student(args.student, "Nome Studente")
+        
+        # Aggiungi alcuni esami (nella pratica, gli esami sarebbero già nel database)
+        univ.add_academic_record(args.student, "MAT101", "Matematica", 9, 28)
+        univ.add_academic_record(args.student, "FIS102", "Fisica", 8, 30)
+        univ.add_academic_record(args.student, "INF103", "Informatica", 10, 29)
+        
+        # Emetti la credenziale
+        credential = univ.issue_credential(args.student)
+        
+        if credential:
+            # Salva la credenziale su file
+            with open(args.output, 'w') as f:
+                json.dump(credential, f, indent=2)
+            print(f"Credenziale emessa con successo! ID: {credential['credential']['credential_id']}")
+        else:
+            print("Errore nell'emissione della credenziale")
+            
+    elif args.command == "verify":
+        # Carica l'università verificatrice
+        verifier = VerifierUniversity(
+            args.university,
+            "./certificates/ca_cert.pem"
+        )
+        
+        # Carica la presentazione
+        with open(args.presentation, 'r') as f:
+            presentation = json.load(f)
+        
+        # Verifica la presentazione
+        result = verifier.verify_presentation(
+            presentation,
+            f"./certificates/{args.issuer}_cert.pem"
+        )
+        
+        if result["valid"]:
+            print("Presentazione verificata con successo!")
+            print(f"Studente: {result['holder_name']} ({result['holder_id']})")
+            print(f"Università emittente: {result['issuer_id']}")
+            print("Attributi divulgati:")
+            for key, value in result["disclosed_attributes"].items():
+                print(f"  - {key}: {value}")
+        else:
+            print(f"Verifica fallita: {result['reason']}")
+            
+    elif args.command == "revoke":
+        # Carica l'università emittente
+        univ = IssuerUniversity(
+            args.university,
+            f"./certificates/{args.university}_cert.pem",
+            f"./certificates/{args.university}_key.pem"
+        )
+        
+        # Revoca la credenziale
+        if univ.revoke_credential(args.credential, args.reason):
+            print(f"Credenziale {args.credential} revocata con successo!")
+        else:
+            print("Errore nella revoca della credenziale")
+            
+    elif args.command == "present":
+        # Carica la credenziale
+        with open(args.credential, 'r') as f:
+            credential = json.load(f)
+        
+        # Crea lo studente
+        student = Student(args.student, "Nome Studente")
+        
+        # Ricevi la credenziale
+        student.receive_credential(credential)
+        credential_id = credential["credential"]["credential_id"]
+        
+        # Crea la presentazione
+        attributes = args.attributes.split(',')
+        presentation = student.create_presentation(credential_id, attributes)
+        
+        if presentation:
+            # Salva la presentazione su file
+            with open(args.output, 'w') as f:
+                json.dump(presentation, f, indent=2)
+            print(f"Presentazione creata con successo con {len(attributes)} attributi divulgati!")
+        else:
+            print("Errore nella creazione della presentazione")
+            
+    elif args.command == "demo":
+        print("Esecuzione della dimostrazione...")
+        
+        # Inizializza l'ambiente
+        setup_environment()
+        
+        # Crea le università
+        univ_salerno = IssuerUniversity(
+            "università_di_salerno",
+            "./certificates/università_di_salerno_cert.pem",
+            "./certificates/università_di_salerno_key.pem"
+        )
+        
+        univ_rennes = VerifierUniversity(
+            "université_de_rennes",
+            "./certificates/ca_cert.pem"
+        )
+        
+        # Crea uno studente
+        student = Student("S12345", "Mario Rossi")
+        
+        print("\n1. Registrazione dello studente presso l'Università di Salerno")
+        univ_salerno.register_student(student.id, student.name)
+        
+        print("\n2. Aggiunta di esami sostenuti dallo studente")
+        univ_salerno.add_academic_record(student.id, "MAT101", "Matematica Avanzata", 9, 28)
+        univ_salerno.add_academic_record(student.id, "FIS102", "Fisica Quantistica", 8, 30)
+        univ_salerno.add_academic_record(student.id, "INF103", "Programmazione", 10, 29)
+        univ_salerno.add_academic_record(student.id, "ING104", "Inglese B2", 5, 27)
+        univ_salerno.add_academic_record(student.id, "ECO105", "Economia", 6, 26)
+        
+        print("\n3. Emissione della credenziale accademica")
+        credential = univ_salerno.issue_credential(student.id)
+        credential_id = credential["credential"]["credential_id"]
+        print(f"   Credenziale emessa con ID: {credential_id}")
+        
+        print("\n4. Ricezione della credenziale da parte dello studente")
+        student.receive_credential(credential)
+        
+        print("\n5. Creazione di una presentazione verificabile con divulgazione selettiva")
+        print("   Lo studente sceglie di condividere solo i voti di Matematica e Fisica")
+        presentation = student.create_presentation(credential_id, ["MAT101", "FIS102"])
+        
+        print("\n6. Verifica della presentazione da parte dell'Università di Rennes")
+        result = univ_rennes.verify_presentation(
+            presentation,
+            "./certificates/università_di_salerno_cert.pem"
+        )
+        
+        if result["valid"]:
+            print("   Verifica completata con successo!")
+            print(f"   Studente verificato: {result['holder_name']} ({result['holder_id']})")
+            print("   Attributi divulgati:")
+            for key, value in result["disclosed_attributes"].items():
+                course_name = value["course_name"]
+                grade = value["grade"]
+                credits = value["credits"]
+                print(f"   - {course_name}: {grade}/30 ({credits} CFU)")
+        else:
+            print(f"   Verifica fallita: {result['reason']}")
+        
+        print("\n7. Test di revoca")
+        print("   L'Università di Salerno revoca la credenziale")
+        univ_salerno.revoke_credential(credential_id, "Errore amministrativo")
+        
+        print("\n8. Verifica dopo la revoca")
+        result = univ_rennes.verify_presentation(
+            presentation,
+            "./certificates/università_di_salerno_cert.pem"
+        )
+        
+        if result["valid"]:
+            print("   Verifica completata con successo (non dovrebbe accadere dopo la revoca)!")
+        else:
+            print(f"   Verifica fallita come previsto: {result['reason']}")
+        
+        print("\nDimostrazione completata con successo!")
+    
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()

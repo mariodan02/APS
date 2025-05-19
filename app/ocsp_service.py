@@ -1,189 +1,168 @@
-from flask import Blueprint, request, jsonify, current_app
-from models import db, OCSPResponse, Credential, User
-from datetime import datetime, timedelta
-from crypto_utils import sign_data, verify_signature
+#!/usr/bin/env python3
+"""
+Implementazione di un semplice servizio di stato dei certificati online (OCSP)
+"""
+import time
 import json
-import logging
-from blockchain import SimpleBlockchain
+import sqlite3
+from typing import Dict, Any, Optional, List
 
-# Configurazione logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# Inizializzazione blueprint e logger
-ocsp = Blueprint('ocsp', __name__)
-logger = logging.getLogger("OCPSService")
-
-# Configurazione TLS
-ocsp_tls = None
-
-def init_ocsp_tls(ca_cert_path, ca_key_path):
+class OCSPService:
     """
-    Inizializza il TLS Manager per il servizio OCSP.
+    Servizio per la verifica dello stato delle credenziali
+    Implementa una versione semplificata dell'Online Certificate Status Protocol
+    """
+    def __init__(self, db_path="./instance/credentials.db"):
+        self.db_path = db_path
+        self._init_db()
     
-    Args:
-        ca_cert_path: Percorso del certificato CA
-        ca_key_path: Percorso della chiave privata CA
+    def _init_db(self):
+        """Inizializza il database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-    Returns:
-        Istanza TLSManager configurata per OCSP
-    """
-    global ocsp_tls
-    from tls_manager import TLSManager
-    
-    logger.info("Inizializzazione TLS per il servizio OCSP")
-    ocsp_tls = TLSManager(ca_cert_path, ca_key_path, ca_cert_path)
-    return ocsp_tls
-
-@ocsp.route('/api/ocsp/check', methods=['POST'])
-def check_credential():
-    """
-    Endpoint OCSP per verificare lo stato della credenziale.
-    Implementa il flusso di verifica OCSP come descritto nel documento.
-    
-    Returns:
-        Risposta OCSP in formato JSON
-    """
-    logger.info("Ricevuta richiesta OCSP")
-    
-    # Ottieni i dati della richiesta
-    data = request.json
-    if not data or 'credential_uuid' not in data:
-        logger.warning("Richiesta OCSP mancante di credential_uuid")
-        return jsonify({"error": "Missing credential_uuid"}), 400
-    
-    credential_uuid = data['credential_uuid']
-    logger.info(f"Verifica OCSP per credenziale {credential_uuid}")
-    
-    # Utilizza TLS se configurato
-    use_tls = current_app.config.get('USE_TLS', False)
-    if use_tls and ocsp_tls:
-        logger.info("Verifica OCSP con TLS abilitato")
-        # In un'implementazione reale, qui ci sarebbe una comunicazione TLS sicura
-    
-    # Verifica se la credenziale esiste
-    credential = Credential.query.filter_by(uuid=credential_uuid).first()
-    if not credential:
-        # Crea una risposta con stato sconosciuto
-        logger.warning(f"Credenziale {credential_uuid} non trovata")
-        return create_ocsp_response(credential_uuid, "unknown", None)
-    
-    # Verifica nella blockchain lo stato della credenziale
-    blockchain = SimpleBlockchain()
-    
-    # Configura TLS per blockchain se necessario
-    if use_tls and ocsp_tls:
-        blockchain.init_tls(
-            ocsp_tls.cert_path,
-            ocsp_tls.key_path,
-            ocsp_tls.ca_path
+        # Crea tabella per lo stato delle credenziali
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS credential_status (
+            credential_id TEXT PRIMARY KEY,
+            issuer_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT,
+            timestamp INTEGER NOT NULL,
+            revocation_timestamp INTEGER
         )
-    
-    status = blockchain.verify_credential(credential_uuid)
-    logger.info(f"Stato della credenziale {credential_uuid}: {status}")
-    
-    # Crea e memorizza la risposta OCSP
-    return create_ocsp_response(credential_uuid, status, credential)
-
-def create_ocsp_response(credential_uuid, status, credential=None):
-    """
-    Crea una risposta OCSP per una credenziale.
-    
-    Args:
-        credential_uuid: UUID della credenziale
-        status: Stato della credenziale (good, revoked, unknown)
-        credential: Oggetto Credential (opzionale)
+        ''')
         
-    Returns:
-        Risposta OCSP in formato JSON
-    """
-    logger.info(f"Creazione risposta OCSP per {credential_uuid}, stato: {status}")
-    
-    # Ottieni l'utente CA per la firma
-    ca_user = User.query.filter_by(role='ca').first()
-    if not ca_user:
-        logger.error("CA non trovata nel sistema")
-        return jsonify({"error": "CA non trovata"}), 500
-    
-    # Prepara i dati della risposta
-    now = datetime.utcnow()
-    response_data = {
-        "responseStatus": "successful",
-        "responseType": "BasicOCSPResponse",
-        "version": 1,
-        "responderID": ca_user.university_did,
-        "producedAt": now.isoformat() + "Z",
-        "responses": [
-            {
-                "certID": {
-                    "hashAlgorithm": "sha256",
-                    "issuerNameHash": credential.issuer.university_did if credential else "",
-                    "issuerKeyHash": "",
-                    "serialNumber": credential_uuid
-                },
-                "certStatus": status,
-                "thisUpdate": now.isoformat() + "Z",
-                "nextUpdate": (now + timedelta(hours=24)).isoformat() + "Z"
-            }
-        ]
-    }
-    
-    # Firma la risposta
-    signature = sign_data(ca_user.private_key, json.dumps(response_data))
-    
-    # Aggiungi la firma alla risposta
-    response_data["signature"] = {
-        "algorithm": "Ed25519",
-        "value": signature
-    }
-    
-    # Memorizza la risposta OCSP nel database
-    ocsp_response = OCSPResponse(
-        credential_uuid=credential_uuid,
-        status=status,
-        produced_at=now,
-        this_update=now,
-        next_update=now + timedelta(hours=24),
-        signature=signature
-    )
-    
-    db.session.add(ocsp_response)
-    db.session.commit()
-    
-    logger.info(f"Risposta OCSP per {credential_uuid} creata e memorizzata")
-    return jsonify(response_data)
-
-@ocsp.route('/api/ocsp/history/<credential_uuid>', methods=['GET'])
-def get_ocsp_history(credential_uuid):
-    """
-    Ottiene la cronologia delle risposte OCSP per una credenziale.
-    
-    Args:
-        credential_uuid: UUID della credenziale
+        # Crea indice per le query rapide
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_issuer_id ON credential_status(issuer_id)
+        ''')
         
-    Returns:
-        Cronologia delle risposte OCSP in formato JSON
-    """
-    logger.info(f"Richiesta cronologia OCSP per {credential_uuid}")
+        conn.commit()
+        conn.close()
     
-    # Utilizza TLS se configurato
-    use_tls = current_app.config.get('USE_TLS', False)
-    if use_tls and ocsp_tls:
-        logger.info("Cronologia OCSP con TLS abilitato")
-        # In un'implementazione reale, qui ci sarebbe una comunicazione TLS sicura
+    def add_credential(self, credential_id: str, issuer_id: str) -> bool:
+        """Aggiunge una nuova credenziale con stato 'valid'"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            INSERT INTO credential_status 
+            (credential_id, issuer_id, status, timestamp) 
+            VALUES (?, ?, ?, ?)
+            ''', (credential_id, issuer_id, 'valid', int(time.time())))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Errore nell'aggiunta della credenziale: {e}")
+            return False
     
-    responses = OCSPResponse.query.filter_by(credential_uuid=credential_uuid).order_by(OCSPResponse.produced_at.desc()).all()
+    def revoke_credential(self, credential_id: str, issuer_id: str, reason: str) -> bool:
+        """Revoca una credenziale esistente"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Verifica che la credenziale esista e appartenga all'emittente
+            cursor.execute('''
+            SELECT * FROM credential_status 
+            WHERE credential_id = ? AND issuer_id = ?
+            ''', (credential_id, issuer_id))
+            
+            result = cursor.fetchone()
+            if not result:
+                conn.close()
+                return False
+            
+            # Aggiorna lo stato della credenziale
+            cursor.execute('''
+            UPDATE credential_status 
+            SET status = ?, reason = ?, revocation_timestamp = ? 
+            WHERE credential_id = ?
+            ''', ('revoked', reason, int(time.time()), credential_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Errore nella revoca della credenziale: {e}")
+            return False
     
-    history = []
-    for response in responses:
-        history.append({
-            "status": response.status,
-            "produced_at": response.produced_at.isoformat() + "Z",
-            "this_update": response.this_update.isoformat() + "Z",
-            "next_update": response.next_update.isoformat() + "Z"
-        })
+    def check_credential_status(self, credential_id: str) -> Dict[str, Any]:
+        """Verifica lo stato di una credenziale"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            SELECT * FROM credential_status 
+            WHERE credential_id = ?
+            ''', (credential_id,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if not result:
+                return {"status": "unknown"}
+            
+            if len(result) >= 6:
+                return {
+                    "credential_id": result[0],
+                    "issuer_id": result[1],
+                    "status": result[2],
+                    "reason": result[3],
+                    "timestamp": result[4],
+                    "revocation_timestamp": result[5]
+                }
+            else:
+                return {
+                    "credential_id": result[0],
+                    "issuer_id": result[1],
+                    "status": result[2],
+                    "timestamp": result[4]
+                }
+        except Exception as e:
+            print(f"Errore nella verifica dello stato della credenziale: {e}")
+            return {"status": "error", "message": str(e)}
     
-    logger.info(f"Trovate {len(history)} risposte OCSP nella cronologia per {credential_uuid}")
-    return jsonify({"credential_uuid": credential_uuid, "history": history})
+    def get_issuer_credentials(self, issuer_id: str) -> List[Dict[str, Any]]:
+        """Restituisce tutte le credenziali emesse da un emittente"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+            SELECT * FROM credential_status 
+            WHERE issuer_id = ?
+            ORDER BY timestamp DESC
+            ''', (issuer_id,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            credentials = []
+            for result in results:
+                if len(result) >= 6:
+                    credentials.append({
+                        "credential_id": result[0],
+                        "issuer_id": result[1],
+                        "status": result[2],
+                        "reason": result[3],
+                        "timestamp": result[4],
+                        "revocation_timestamp": result[5]
+                    })
+                else:
+                    credentials.append({
+                        "credential_id": result[0],
+                        "issuer_id": result[1],
+                        "status": result[2],
+                        "timestamp": result[4]
+                    })
+            
+            return credentials
+        except Exception as e:
+            print(f"Errore nel recupero delle credenziali dell'emittente: {e}")
+            return []

@@ -1,146 +1,120 @@
-import datetime
-from cryptography.hazmat.primitives.asymmetric import rsa, ed25519
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
-from cryptography.exceptions import InvalidSignature
+#!/usr/bin/env python3
+"""
+Utility crittografiche per il sistema di credenziali accademiche
+"""
+import os
 import base64
 import hashlib
 import json
-import os
-import uuid
+from cryptography.fernet import Fernet, MultiFernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.serialization import (
+    Encoding, PrivateFormat, PublicFormat, NoEncryption,
+    load_pem_private_key, load_pem_public_key
+)
 
-def generate_keypair():
-    """Genera una coppia di chiavi Ed25519 per firme digitali"""
-    private_key = ed25519.Ed25519PrivateKey.generate()
+def generate_key_pair():
+    """Genera una coppia di chiavi RSA per la firma"""
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
     public_key = private_key.public_key()
     
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
+    # Converti le chiavi in formato PEM
+    private_key_pem = private_key.private_bytes(
+        encoding=Encoding.PEM,
+        format=PrivateFormat.PKCS8,
+        encryption_algorithm=NoEncryption()
+    )
+    public_key_pem = public_key.public_bytes(
+        encoding=Encoding.PEM,
+        format=PublicFormat.SubjectPublicKeyInfo
     )
     
-    public_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-    
-    return private_pem.decode('utf-8'), public_pem.decode('utf-8')
+    return private_key_pem, public_key_pem
 
-def sign_data(private_key_pem, data):
-    """Firma i dati con una chiave privata"""
-    if isinstance(data, dict):
-        data = json.dumps(data).encode('utf-8')
+def generate_fernet_key():
+    """Genera una chiave Fernet per la cifratura simmetrica"""
+    return Fernet.generate_key()
+
+def create_multifernet(keys):
+    """Crea un MultiFernet con le chiavi fornite"""
+    fernet_keys = [Fernet(key) for key in keys]
+    return MultiFernet(fernet_keys)
+
+def encrypt_data(data, key):
+    """Cifra i dati con Fernet"""
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data).encode()
     elif isinstance(data, str):
-        data = data.encode('utf-8')
+        data = data.encode()
+        
+    f = Fernet(key)
+    return f.encrypt(data)
+
+def decrypt_data(encrypted_data, key):
+    """Decifra i dati con Fernet"""
+    f = Fernet(key)
+    decrypted = f.decrypt(encrypted_data)
     
-    private_key = load_pem_private_key(
-        private_key_pem.encode('utf-8'),
-        password=None
+    try:
+        # Prova a interpretare come JSON
+        return json.loads(decrypted)
+    except:
+        # Altrimenti restituisci come stringa
+        return decrypted.decode()
+
+def hash_data(data):
+    """Calcola l'hash SHA-256 dei dati"""
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data, sort_keys=True).encode()
+    elif isinstance(data, str):
+        data = data.encode()
+        
+    return hashlib.sha256(data).hexdigest()
+
+def sign_data(data, private_key_pem):
+    """Firma i dati con la chiave privata RSA"""
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data, sort_keys=True).encode()
+    elif isinstance(data, str):
+        data = data.encode()
+    
+    private_key = load_pem_private_key(private_key_pem, password=None)
+    
+    signature = private_key.sign(
+        data,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
     )
     
-    signature = private_key.sign(data)
-    return base64.b64encode(signature).decode('utf-8')
+    return base64.b64encode(signature).decode()
 
-def verify_signature(public_key_pem, data, signature):
-    """Verifica una firma rispetto ai dati con una chiave pubblica"""
-    if isinstance(data, dict):
-        data = json.dumps(data).encode('utf-8')
+def verify_signature(data, signature, public_key_pem):
+    """Verifica la firma con la chiave pubblica RSA"""
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data, sort_keys=True).encode()
     elif isinstance(data, str):
-        data = data.encode('utf-8')
-    
-    public_key = load_pem_public_key(public_key_pem.encode('utf-8'))
+        data = data.encode()
+        
+    public_key = load_pem_public_key(public_key_pem)
     signature_bytes = base64.b64decode(signature)
     
     try:
-        public_key.verify(signature_bytes, data)
+        public_key.verify(
+            signature_bytes,
+            data,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
         return True
-    except InvalidSignature:
+    except Exception:
         return False
-
-def hash_data(data):
-    """Crea un hash SHA-256 dei dati"""
-    if isinstance(data, dict):
-        data = json.dumps(data).encode('utf-8')
-    elif isinstance(data, str):
-        data = data.encode('utf-8')
-    
-    return hashlib.sha256(data).hexdigest()
-
-def generate_credential_id():
-    """Genera un ID credenziale unico"""
-    return str(uuid.uuid4())
-
-def compute_credential_hash(credential):
-    """Calcola l'hash della credenziale per la memorizzazione nella blockchain"""
-    cred_dict = {
-        "uuid": credential.uuid,
-        "issuer": credential.issuer_id,
-        "student": credential.student_id,
-        "timestamp": credential.issue_timestamp.isoformat(),
-        "course_code": credential.course_code,
-        "grade": credential.exam_grade,
-        "credits": credential.ects_credits
-    }
-    return hash_data(cred_dict)
-
-def create_proof_of_integrity(credential):
-    """Crea una prova di integrità per la credenziale"""
-    # Creiamo semplicemente un hash semplificato
-    cred_hash = compute_credential_hash(credential)
-    return {
-        "type": "IntegrityProof",
-        "created": credential.issue_timestamp.isoformat() + "Z",
-        "hash": cred_hash,
-        "method": "SHA-256"
-    }
-
-def generate_challenge():
-    """Genera una sfida casuale per l'autenticazione"""
-    return base64.b64encode(os.urandom(32)).decode('utf-8')
-
-def verify_challenge_response(challenge, response, public_key_pem):
-    """Verifica una risposta alla sfida per l'autenticazione"""
-    return verify_signature(public_key_pem, challenge, response)
-
-def selective_disclosure(credential, fields_to_disclose):
-    """Crea una divulgazione selettiva di una credenziale con solo i campi specificati"""
-    full_dict = credential.to_dict()
-    disclosed_dict = {
-        "metadati": {
-            "versione": full_dict["metadati"]["versione"],
-            "identificativoUUID": full_dict["metadati"]["identificativoUUID"],
-            "timestampEmissione": full_dict["metadati"]["timestampEmissione"],
-            "firma": full_dict["metadati"]["firma"]
-        },
-        "emittente": full_dict["emittente"],
-        "soggetto": {
-            "identificativoStudente": {
-                "identificativoPseudonimo": full_dict["soggetto"]["identificativoStudente"]["identificativoPseudonimo"],
-                "protezionePrivacy": "divulgazione_selettiva"
-            }
-        },
-        "attributiAccademici": {}
-    }
-    
-    # Aggiungi solo gli attributi accademici richiesti
-    for field in fields_to_disclose:
-        if field in full_dict["attributiAccademici"]:
-            disclosed_dict["attributiAccademici"][field] = full_dict["attributiAccademici"][field]
-    
-    return disclosed_dict
-
-def generate_ocsp_response(credential_uuid, status, private_key_pem):
-    """Genera una risposta OCSP semplificata"""
-    response_data = {
-        "credential_uuid": credential_uuid,
-        "status": status,
-        "produced_at": datetime.utcnow().isoformat() + "Z",
-        "this_update": datetime.utcnow().isoformat() + "Z",
-        "next_update": (datetime.utcnow() + datetime.timedelta(hours=24)).isoformat() + "Z"
-    }
-    
-    signature = sign_data(private_key_pem, response_data)
-    response_data["signature"] = signature
-    
-    return response_data
