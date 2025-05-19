@@ -1,13 +1,13 @@
-# Guida al Sistema di Credenziali Accademiche con Blockchain Ethereum
+# Sistema di Credenziali Accademiche con Blockchain Ethereum
 
-Questa guida spiega come utilizzare il sistema di credenziali accademiche modificato per lavorare con una blockchain Ethereum locale tramite Ganache.
+Questa guida spiega come utilizzare il sistema di credenziali accademiche basato su blockchain Ethereum tramite Ganache.
 
 ## Prerequisiti
 
 1. Installare le dipendenze:
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 2. Ganache in esecuzione su http://127.0.0.1:7545
    - Scaricare e installare [Ganache](https://trufflesuite.com/ganache/)
@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ### 1. Inizializzare l'ambiente
 
 ```bash
-python app.py setup
+python app/app.py setup
 ```
 
 Questo creerà le directory necessarie e i certificati per le università.
@@ -26,7 +26,7 @@ Questo creerà le directory necessarie e i certificati per le università.
 ### 2. Compilare il contratto Solidity
 
 ```bash
-python app.py compile
+python app/app.py compile
 ```
 
 Questo compilerà il contratto Solidity e genererà il file ABI.
@@ -34,7 +34,7 @@ Questo compilerà il contratto Solidity e genererà il file ABI.
 ### 3. Distribuire il contratto sulla blockchain Ganache
 
 ```bash
-python app.py deploy --private-key <CHIAVE_PRIVATA_ETH>
+python app/app.py deploy --private-key <CHIAVE_PRIVATA_ETH>
 ```
 
 Dove `<CHIAVE_PRIVATA_ETH>` è la chiave privata di uno degli account su Ganache. Puoi ottenerla facendo clic su "Show Keys" nell'interfaccia di Ganache.
@@ -44,7 +44,7 @@ Questo comando restituirà l'indirizzo del contratto distribuito, che sarà nece
 ### 4. Emettere una credenziale
 
 ```bash
-python app.py issue --university università_di_salerno --student S12345 --output credential.json --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+python app/app.py issue --university università_di_salerno --student S12345 --output credential.json --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
 ```
 
 Questo emetterà una credenziale per lo studente e la registrerà sulla blockchain.
@@ -52,7 +52,7 @@ Questo emetterà una credenziale per lo studente e la registrerà sulla blockcha
 ### 5. Creare una presentazione verificabile
 
 ```bash
-python app.py present --student S12345 --credential credential.json --attributes MAT101,FIS102 --output presentation.json
+python app/app.py present --student S12345 --credential credential.json --attributes MAT101,FIS102 --output presentation.json
 ```
 
 Questo creerà una presentazione verificabile che rivela solo gli attributi selezionati.
@@ -60,7 +60,7 @@ Questo creerà una presentazione verificabile che rivela solo gli attributi sele
 ### 6. Verificare una presentazione
 
 ```bash
-python app.py verify --university université_de_rennes --presentation presentation.json --issuer università_di_salerno --contract <INDIRIZZO_CONTRATTO>
+python app/app.py verify --university université_de_rennes --presentation presentation.json --issuer università_di_salerno --contract <INDIRIZZO_CONTRATTO>
 ```
 
 Questo verificherà la presentazione, controllando la firma e lo stato della credenziale sulla blockchain.
@@ -68,7 +68,7 @@ Questo verificherà la presentazione, controllando la firma e lo stato della cre
 ### 7. Revocare una credenziale
 
 ```bash
-python app.py revoke --university università_di_salerno --credential <ID_CREDENZIALE> --reason "Errore amministrativo" --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+python app/app.py revoke --university università_di_salerno --credential <ID_CREDENZIALE> --reason "Errore amministrativo" --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
 ```
 
 Questo revocherà la credenziale sulla blockchain.
@@ -76,7 +76,7 @@ Questo revocherà la credenziale sulla blockchain.
 ### 8. Verificare lo stato di una credenziale
 
 ```bash
-python app.py check --credential <ID_CREDENZIALE> --contract <INDIRIZZO_CONTRATTO>
+python app/app.py check --credential <ID_CREDENZIALE> --contract <INDIRIZZO_CONTRATTO>
 ```
 
 Questo mostrerà lo stato attuale della credenziale sulla blockchain.
@@ -84,7 +84,7 @@ Questo mostrerà lo stato attuale della credenziale sulla blockchain.
 ### 9. Eseguire una dimostrazione completa
 
 ```bash
-python app.py demo --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
+python app/app.py demo --eth-private-key <CHIAVE_PRIVATA_ETH> --contract <INDIRIZZO_CONTRATTO>
 ```
 
 Questo eseguirà una dimostrazione completa del sistema, emettendo una credenziale, creando una presentazione, verificandola, revocandola e dimostrando che la verifica fallisce dopo la revoca.
